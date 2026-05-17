@@ -1,0 +1,18 @@
+# 1. 初始化 Git 儲存庫 (若已初始化可跳過)
+git init
+
+# 2. 將所有檔案 (除了 .gitignore 排除的之外) 加入追蹤清單
+git add .
+
+# 3. 提交這次的變更，並附上專業的 Commit 訊息
+git commit -m "Initial commit: Add AMR 2D physics simulator and environment editor"
+
+# 4. 將預設分支名稱設定為 main (符合現今 GitHub 預設標準)
+git branch -M main
+
+# 5. 綁定你的遠端 GitHub 儲存庫 (使用你提供的 SSH 網址)
+git remote add origin git@github.com:johnson931128/CtrlKine-AMR.git
+
+# 6. 將程式碼推送到遠端 (Push)
+# -u 參數會將本地的 main 分支與遠端的 main 分支綁定，未來只需打 git push 即可
+git push -u origin main
