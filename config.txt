@@ -1,0 +1,6 @@
+bodyLength 120.0
+bodyWidth 60.0
+wheelLength 30.0
+wheelWidth 10.0
+trackWidth 70.0
+wheelBase 80.0

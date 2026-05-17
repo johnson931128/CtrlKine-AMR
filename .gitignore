@@ -1,0 +1,22 @@
+# Compiled Object files (目的檔)
+*.o
+*.obj
+
+# Executables (執行檔)
+*.exe
+*.out
+*.app
+
+# Compiled Dynamic/Static libraries (函式庫)
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# Custom Build Directory (自訂編譯資料夾)
+build/
+
+# OS generated files (作業系統產生的暫存檔)
+.DS_Store
+Thumbs.db
