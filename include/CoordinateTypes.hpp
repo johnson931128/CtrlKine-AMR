@@ -54,6 +54,13 @@ public:
         );
     }
 
+    sf::Vector2f snapWorldToGridCorner(const sf::Vector2f& worldPos) const {
+        return sf::Vector2f(
+            std::round(worldPos.x / m_gridResolution) * m_gridResolution,
+            std::round(worldPos.y / m_gridResolution) * m_gridResolution
+        );
+    }
+
 private:
     float m_gridResolution;
 };

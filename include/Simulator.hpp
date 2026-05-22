@@ -19,6 +19,7 @@ private:
     void loadConfig(const std::string& filename);
     void handleEditorHotkeys(const sf::Event& event);
     void drawToolbar();
+    void drawInspector();
     std::string getModeLabel(EditorMode mode) const;
     void updateCursorPreview();
 
@@ -27,6 +28,7 @@ private:
     sf::View m_simView;
 
     sf::RectangleShape m_toolbarBg;
+    sf::RectangleShape m_inspectorBg;
     sf::RectangleShape m_divider;
     sf::Font m_uiFont;
     bool m_hasUiFont;
@@ -39,4 +41,5 @@ private:
     bool m_isPanning;
     sf::Vector2i m_lastPanPixel;
     std::optional<sf::Vector2f> m_hoverWorldPos;
+    sf::FloatRect m_simViewportRect;
 };

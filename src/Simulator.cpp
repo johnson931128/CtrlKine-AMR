@@ -6,6 +6,11 @@
 #include <sstream>
 
 namespace {
+constexpr unsigned int kWindowWidth = 1280;
+constexpr unsigned int kWindowHeight = 800;
+constexpr float kToolbarHeight = 64.0f;
+constexpr float kInspectorWidth = 260.0f;
+
 bool loadUiFont(sf::Font& font) {
     const std::array<const char*, 4> fontPaths = {
         "C:/Windows/Fonts/segoeui.ttf",
@@ -25,27 +30,38 @@ bool loadUiFont(sf::Font& font) {
 }
 
 Simulator::Simulator()
-    : m_window(sf::VideoMode({1200u, 800u}), "AMR Physics Simulator & Environment Editor"),
+    : m_window(sf::VideoMode({kWindowWidth, kWindowHeight}), "AMR Physics Simulator & Environment Editor"),
       m_hasUiFont(false),
       m_amrConfig{100.0f, 60.0f, 30.0f, 10.0f, 70.0f, 80.0f, sf::Color(100, 150, 250), sf::Color(50, 50, 50)},
       m_amr(m_amrConfig, sf::Vector2f({400.0f, 400.0f})),
       m_env(50.0f),
       m_isPanning(false),
-      m_lastPanPixel({0, 0}) {
+      m_lastPanPixel({0, 0}),
+      m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)) {
     loadConfig("config.txt");
     m_hasUiFont = loadUiFont(m_uiFont);
     m_amr = AMR(m_amrConfig, sf::Vector2f({400.0f, 400.0f}));
 
     m_uiView = m_window.getDefaultView();
-    m_simView = sf::View(sf::Vector2f({400.0f, 400.0f}), sf::Vector2f({800.0f, 800.0f}));
-    m_simView.setViewport(sf::FloatRect({0.0f, 0.0f}, {800.0f / 1200.0f, 1.0f}));
+    m_simView = sf::View(
+        sf::Vector2f({400.0f, 400.0f}),
+        sf::Vector2f({m_simViewportRect.size.x, m_simViewportRect.size.y})
+    );
+    m_simView.setViewport(sf::FloatRect(
+        {m_simViewportRect.position.x / static_cast<float>(kWindowWidth), m_simViewportRect.position.y / static_cast<float>(kWindowHeight)},
+        {m_simViewportRect.size.x / static_cast<float>(kWindowWidth), m_simViewportRect.size.y / static_cast<float>(kWindowHeight)}
+    ));
 
-    m_toolbarBg.setSize(sf::Vector2f({400.0f, 800.0f}));
-    m_toolbarBg.setPosition(sf::Vector2f({800.0f, 0.0f}));
-    m_toolbarBg.setFillColor(sf::Color(220, 220, 220));
+    m_toolbarBg.setSize(sf::Vector2f({static_cast<float>(kWindowWidth), kToolbarHeight}));
+    m_toolbarBg.setPosition(sf::Vector2f({0.0f, 0.0f}));
+    m_toolbarBg.setFillColor(sf::Color(236, 236, 236));
 
-    m_divider.setSize(sf::Vector2f({5.0f, 800.0f}));
-    m_divider.setPosition(sf::Vector2f({800.0f, 0.0f}));
+    m_inspectorBg.setSize(sf::Vector2f({kInspectorWidth, static_cast<float>(kWindowHeight) - kToolbarHeight}));
+    m_inspectorBg.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, kToolbarHeight}));
+    m_inspectorBg.setFillColor(sf::Color(244, 244, 244));
+
+    m_divider.setSize(sf::Vector2f({2.0f, static_cast<float>(kWindowHeight)}));
+    m_divider.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, 0.0f}));
     m_divider.setFillColor(sf::Color(150, 150, 150));
 }
 
@@ -76,29 +92,39 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
     if (const auto* keyPressed = event.getIf<sf::Event::KeyPressed>()) {
         switch (keyPressed->code) {
         case sf::Keyboard::Key::Num1:
+        case sf::Keyboard::Key::S:
             m_env.setEditorMode(EditorMode::Select);
             break;
         case sf::Keyboard::Key::Num2:
+        case sf::Keyboard::Key::O:
             m_env.setEditorMode(EditorMode::PlaceObstacle);
             break;
         case sf::Keyboard::Key::Num3:
+        case sf::Keyboard::Key::E:
             m_env.setEditorMode(EditorMode::DeleteObstacle);
             break;
         case sf::Keyboard::Key::Num4:
+        case sf::Keyboard::Key::T:
             m_env.setEditorMode(EditorMode::SetStartPose);
             break;
         case sf::Keyboard::Key::Num5:
+        case sf::Keyboard::Key::G:
             m_env.setEditorMode(EditorMode::SetGoalPose);
             break;
         case sf::Keyboard::Key::Num6:
+        case sf::Keyboard::Key::Z:
             m_env.setEditorMode(EditorMode::DrawWorkZone);
             break;
         case sf::Keyboard::Key::Num7:
+        case sf::Keyboard::Key::P:
             m_env.setEditorMode(EditorMode::PanView);
             break;
         case sf::Keyboard::Key::Escape:
             m_env.cancelActiveTool();
             m_isPanning = false;
+            if (m_env.getEditorMode() == EditorMode::DrawWorkZone) {
+                m_env.setEditorMode(EditorMode::Select);
+            }
             break;
         default:
             break;
@@ -129,7 +155,12 @@ std::string Simulator::getModeLabel(EditorMode mode) const {
 
 void Simulator::updateCursorPreview() {
     const sf::Vector2i mousePixel = sf::Mouse::getPosition(m_window);
-    if (mousePixel.x >= 0 && mousePixel.x < 800 && mousePixel.y >= 0 && mousePixel.y < 800) {
+    const bool insideSimX = mousePixel.x >= static_cast<int>(m_simViewportRect.position.x)
+        && mousePixel.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x);
+    const bool insideSimY = mousePixel.y >= static_cast<int>(m_simViewportRect.position.y)
+        && mousePixel.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y);
+
+    if (insideSimX && insideSimY) {
         m_hoverWorldPos = m_window.mapPixelToCoords(mousePixel, m_simView);
         m_env.setCursorWorldPosition(m_hoverWorldPos);
         return;
@@ -157,27 +188,43 @@ void Simulator::processEvents() {
         }
 
         if (const auto* scroll = event->getIf<sf::Event::MouseWheelScrolled>()) {
-            if (sf::Mouse::getPosition(m_window).x < 800) {
+            const sf::Vector2i mousePos = sf::Mouse::getPosition(m_window);
+            if (mousePos.x >= static_cast<int>(m_simViewportRect.position.x)
+                && mousePos.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
+                && mousePos.y >= static_cast<int>(m_simViewportRect.position.y)
+                && mousePos.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y)) {
                 if (scroll->delta > 0) m_simView.zoom(0.9f);
                 else if (scroll->delta < 0) m_simView.zoom(1.1f);
             }
         }
 
         if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
-            if (mouseBtn->button == sf::Mouse::Button::Left && mouseBtn->position.x < 800) {
+            const bool insideSimArea = mouseBtn->position.x >= static_cast<int>(m_simViewportRect.position.x)
+                && mouseBtn->position.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
+                && mouseBtn->position.y >= static_cast<int>(m_simViewportRect.position.y)
+                && mouseBtn->position.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y);
+            if (mouseBtn->button == sf::Mouse::Button::Left && insideSimArea) {
                 const sf::Vector2f worldPos = m_window.mapPixelToCoords(mouseBtn->position, m_simView);
 
                 if (m_env.getEditorMode() == EditorMode::PanView) {
                     m_isPanning = true;
                     m_lastPanPixel = mouseBtn->position;
                 } else {
-                    m_env.handleLeftClick(worldPos);
+                    m_env.handleLeftMousePressed(worldPos);
                 }
             }
         }
 
         if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonReleased>()) {
             if (mouseBtn->button == sf::Mouse::Button::Left) {
+                const bool insideSimArea = mouseBtn->position.x >= static_cast<int>(m_simViewportRect.position.x)
+                    && mouseBtn->position.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
+                    && mouseBtn->position.y >= static_cast<int>(m_simViewportRect.position.y)
+                    && mouseBtn->position.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y);
+                if (insideSimArea) {
+                    const sf::Vector2f worldPos = m_window.mapPixelToCoords(mouseBtn->position, m_simView);
+                    m_env.handleLeftMouseReleased(worldPos);
+                }
                 m_isPanning = false;
             }
         }
@@ -236,84 +283,141 @@ void Simulator::render() {
 
     m_window.setView(m_uiView);
     drawToolbar();
+    drawInspector();
 
     m_window.display();
 }
 
 void Simulator::drawToolbar() {
     m_window.draw(m_toolbarBg);
+
+    if (!m_hasUiFont) {
+        return;
+    }
+
+    const std::array<std::pair<EditorMode, std::string>, 7> tools = {{
+        {EditorMode::Select, "[S]"},
+        {EditorMode::PlaceObstacle, "[O]"},
+        {EditorMode::DeleteObstacle, "[E]"},
+        {EditorMode::SetStartPose, "[T]"},
+        {EditorMode::SetGoalPose, "[G]"},
+        {EditorMode::DrawWorkZone, "[Z]"},
+        {EditorMode::PanView, "[P]"}
+    }};
+
+    constexpr float buttonWidth = 42.0f;
+    constexpr float buttonHeight = 30.0f;
+    constexpr float buttonGap = 8.0f;
+    float x = 16.0f;
+    for (std::size_t i = 0; i < tools.size(); ++i) {
+        const auto& [mode, label] = tools[i];
+        sf::RectangleShape buttonBg(sf::Vector2f(buttonWidth, buttonHeight));
+        buttonBg.setPosition(sf::Vector2f(x, 16.0f));
+        buttonBg.setFillColor(
+            mode == m_env.getEditorMode() ? sf::Color(70, 130, 180, 40) : sf::Color(255, 255, 255, 0)
+        );
+        buttonBg.setOutlineThickness(1.0f);
+        buttonBg.setOutlineColor(
+            mode == m_env.getEditorMode() ? sf::Color(70, 130, 180) : sf::Color(195, 195, 195)
+        );
+        m_window.draw(buttonBg);
+
+        sf::Text toolText(m_uiFont, label, 16);
+        toolText.setFillColor(mode == m_env.getEditorMode() ? sf::Color(25, 70, 120) : sf::Color(60, 60, 60));
+        toolText.setPosition(sf::Vector2f(x + 6.0f, 22.0f));
+        m_window.draw(toolText);
+        x += buttonWidth + buttonGap;
+    }
+}
+
+void Simulator::drawInspector() {
+    m_window.draw(m_inspectorBg);
     m_window.draw(m_divider);
 
     if (!m_hasUiFont) {
         return;
     }
 
-    sf::Text title(m_uiFont, "Editor Tools", 28);
+    const float panelX = static_cast<float>(kWindowWidth) - kInspectorWidth + 16.0f;
+    float y = kToolbarHeight + 18.0f;
+
+    sf::Text title(m_uiFont, "Inspector", 24);
     title.setFillColor(sf::Color(40, 40, 40));
-    title.setPosition(sf::Vector2f(835.0f, 36.0f));
+    title.setPosition(sf::Vector2f(panelX, y));
     m_window.draw(title);
+    y += 42.0f;
 
-    sf::Text currentMode(m_uiFont, "Current Mode: " + getModeLabel(m_env.getEditorMode()), 20);
-    currentMode.setFillColor(sf::Color(30, 30, 30));
-    currentMode.setPosition(sf::Vector2f(835.0f, 92.0f));
-    m_window.draw(currentMode);
+    sf::Text section1(m_uiFont, "Cursor", 19);
+    section1.setFillColor(sf::Color(45, 45, 45));
+    section1.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(section1);
+    y += 28.0f;
 
-    const std::array<std::pair<EditorMode, std::string>, 7> tools = {{
-        {EditorMode::Select, "[1] Select"},
-        {EditorMode::PlaceObstacle, "[2] Add Obstacle"},
-        {EditorMode::DeleteObstacle, "[3] Delete Obstacle"},
-        {EditorMode::SetStartPose, "[4] Set Start"},
-        {EditorMode::SetGoalPose, "[5] Set Goal"},
-        {EditorMode::DrawWorkZone, "[6] Draw Work Zone"},
-        {EditorMode::PanView, "[7] Pan View"}
-    }};
-
-    float y = 150.0f;
-    for (const auto& [mode, label] : tools) {
-        sf::RectangleShape buttonBg(sf::Vector2f(320.0f, 34.0f));
-        buttonBg.setPosition(sf::Vector2f(830.0f, y - 4.0f));
-        buttonBg.setFillColor(
-            mode == m_env.getEditorMode() ? sf::Color(70, 130, 180, 40) : sf::Color(255, 255, 255, 0)
-        );
-        buttonBg.setOutlineThickness(mode == m_env.getEditorMode() ? 1.0f : 0.0f);
-        buttonBg.setOutlineColor(sf::Color(70, 130, 180));
-        m_window.draw(buttonBg);
-
-        sf::Text toolText(m_uiFont, label, 18);
-        toolText.setFillColor(mode == m_env.getEditorMode() ? sf::Color(25, 70, 120) : sf::Color(60, 60, 60));
-        toolText.setPosition(sf::Vector2f(842.0f, y));
-        m_window.draw(toolText);
-        y += 40.0f;
-    }
-
-    sf::Text hint(m_uiFont, "Esc: cancel current tool", 17);
-    hint.setFillColor(sf::Color(90, 90, 90));
-    hint.setPosition(sf::Vector2f(835.0f, 455.0f));
-    m_window.draw(hint);
-
+    std::ostringstream cursorInfo;
     if (m_hoverWorldPos.has_value()) {
         const GridCoord hoveredGrid = m_env.getMapData().getMapper().worldToGrid(*m_hoverWorldPos);
-
-        sf::Text cursorLabel(m_uiFont, "Cursor", 20);
-        cursorLabel.setFillColor(sf::Color(40, 40, 40));
-        cursorLabel.setPosition(sf::Vector2f(835.0f, 520.0f));
-        m_window.draw(cursorLabel);
-
-        std::ostringstream info;
-        info << "World: (" << static_cast<int>(m_hoverWorldPos->x)
-             << ", " << static_cast<int>(m_hoverWorldPos->y) << ")\n"
-             << "Grid: (" << hoveredGrid.col << ", " << hoveredGrid.row << ")";
-
-        sf::Text cursorInfo(m_uiFont, info.str(), 17);
-        cursorInfo.setFillColor(sf::Color(70, 70, 70));
-        cursorInfo.setPosition(sf::Vector2f(835.0f, 555.0f));
-        m_window.draw(cursorInfo);
+        cursorInfo << "World: (" << static_cast<int>(m_hoverWorldPos->x) << ", "
+                   << static_cast<int>(m_hoverWorldPos->y) << ")\n"
+                   << "Grid: (" << hoveredGrid.col << ", " << hoveredGrid.row << ")";
+    } else {
+        cursorInfo << "World: -\nGrid: -";
     }
 
+    sf::Text cursorText(m_uiFont, cursorInfo.str(), 16);
+    cursorText.setFillColor(sf::Color(75, 75, 75));
+    cursorText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(cursorText);
+    y += 70.0f;
+
+    sf::Text section2(m_uiFont, "Map Stats", 19);
+    section2.setFillColor(sf::Color(45, 45, 45));
+    section2.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(section2);
+    y += 28.0f;
+
+    const MapData& map = m_env.getMapData();
+    std::ostringstream mapInfo;
+    mapInfo << "Grid: " << static_cast<int>(map.getGridResolution()) << "\n"
+            << "Obstacles: " << map.getObstacles().size() << "\n"
+            << "Work Zones: " << map.getWorkZones().size() << "\n"
+            << "Start Pose: " << (map.getRobotStartPose().has_value() ? "set" : "unset") << "\n"
+            << "Goal Pose: " << (map.getRobotGoalPose().has_value() ? "set" : "unset");
+
+    sf::Text mapText(m_uiFont, mapInfo.str(), 16);
+    mapText.setFillColor(sf::Color(75, 75, 75));
+    mapText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(mapText);
+    y += 120.0f;
+
+    sf::Text section3(m_uiFont, "Robot State", 19);
+    section3.setFillColor(sf::Color(45, 45, 45));
+    section3.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(section3);
+    y += 28.0f;
+
+    const sf::Vector2f robotPos = m_amr.getPosition();
+    std::ostringstream robotInfo;
+    robotInfo << "Position: (" << static_cast<int>(robotPos.x) << ", "
+              << static_cast<int>(robotPos.y) << ")\n"
+              << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg\n"
+              << "Mode: manual";
+
+    sf::Text robotText(m_uiFont, robotInfo.str(), 16);
+    robotText.setFillColor(sf::Color(75, 75, 75));
+    robotText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(robotText);
+    y += 86.0f;
+
     if (m_env.getEditorMode() == EditorMode::DrawWorkZone) {
-        sf::Text zoneHint(m_uiFont, "Click once to start,\nmove mouse to preview,\nclick again to confirm.", 17);
+        sf::Text zoneHint(
+            m_uiFont,
+            m_env.isDrawingWorkZone()
+                ? "Work Zone:\nRelease mouse to create\nEsc to cancel"
+                : "Work Zone:\nPress and drag to create\nEsc to cancel",
+            16
+        );
         zoneHint.setFillColor(sf::Color(70, 70, 70));
-        zoneHint.setPosition(sf::Vector2f(835.0f, 650.0f));
+        zoneHint.setPosition(sf::Vector2f(panelX, y));
         m_window.draw(zoneHint);
     }
 }

@@ -4,9 +4,9 @@
 #include <cmath>
 
 Environment::Environment(float gridSize)
-    : m_map(gridSize), m_editorMode(EditorMode::PlaceObstacle) {}
+    : m_map(gridSize), m_editorMode(EditorMode::PlaceObstacle), m_isDrawingWorkZone(false) {}
 
-void Environment::handleLeftClick(const sf::Vector2f& worldPos) {
+void Environment::handleLeftMousePressed(const sf::Vector2f& worldPos) {
     switch (m_editorMode) {
     case EditorMode::Select:
         break;
@@ -26,20 +26,30 @@ void Environment::handleLeftClick(const sf::Vector2f& worldPos) {
         if (!m_map.containsWorldPoint(worldPos)) {
             return;
         }
-        if (!m_pendingZoneStart.has_value()) {
-            m_pendingZoneStart = worldPos;
-            return;
-        }
-        m_map.addWorkZone(makeRectFromPoints(*m_pendingZoneStart, worldPos));
-        m_pendingZoneStart.reset();
+        m_pendingZoneStart = m_map.getMapper().snapWorldToGridCorner(worldPos);
+        m_isDrawingWorkZone = true;
         break;
     case EditorMode::PanView:
         break;
     }
 }
 
+void Environment::handleLeftMouseReleased(const sf::Vector2f& worldPos) {
+    if (m_editorMode != EditorMode::DrawWorkZone || !m_isDrawingWorkZone || !m_pendingZoneStart.has_value()) {
+        return;
+    }
+
+    const sf::Vector2f snappedEnd = m_map.getMapper().snapWorldToGridCorner(worldPos);
+    const sf::FloatRect zoneRect = makeRectFromPoints(*m_pendingZoneStart, snappedEnd);
+    m_map.addWorkZone(zoneRect);
+    m_pendingZoneStart.reset();
+    m_isDrawingWorkZone = false;
+    m_editorMode = EditorMode::Select;
+}
+
 void Environment::cancelActiveTool() {
     m_pendingZoneStart.reset();
+    m_isDrawingWorkZone = false;
 }
 
 void Environment::setEditorMode(EditorMode mode) {
@@ -151,9 +161,10 @@ void Environment::drawWorkZones(sf::RenderWindow& window) {
         pendingMarker.setFillColor(sf::Color(65, 105, 225));
         window.draw(pendingMarker);
 
-        if (m_cursorWorldPos.has_value() && m_map.containsWorldPoint(*m_cursorWorldPos)) {
+        if (m_isDrawingWorkZone && m_cursorWorldPos.has_value() && m_map.containsWorldPoint(*m_cursorWorldPos)) {
             sf::RectangleShape previewZone;
-            const sf::FloatRect previewBounds = makeRectFromPoints(*m_pendingZoneStart, *m_cursorWorldPos);
+            const sf::Vector2f snappedCursor = m_map.getMapper().snapWorldToGridCorner(*m_cursorWorldPos);
+            const sf::FloatRect previewBounds = makeRectFromPoints(*m_pendingZoneStart, snappedCursor);
             previewZone.setPosition(previewBounds.position);
             previewZone.setSize(previewBounds.size);
             previewZone.setFillColor(sf::Color(65, 105, 225, 40));
@@ -183,6 +194,15 @@ void Environment::drawCursorPreview(sf::RenderWindow& window) {
 
     if (m_editorMode == EditorMode::SetStartPose || m_editorMode == EditorMode::SetGoalPose) {
         drawPoseMarker(window, Pose2D{*m_cursorWorldPos, 0.0f}, getPreviewColor());
+        return;
+    }
+
+    if (m_editorMode == EditorMode::DrawWorkZone) {
+        sf::CircleShape cornerMarker(5.0f);
+        cornerMarker.setOrigin(sf::Vector2f(5.0f, 5.0f));
+        cornerMarker.setPosition(m_map.getMapper().snapWorldToGridCorner(*m_cursorWorldPos));
+        cornerMarker.setFillColor(getPreviewColor());
+        window.draw(cornerMarker);
     }
 }
 
@@ -227,6 +247,10 @@ bool Environment::isInsideWorldBounds(const sf::Vector2f& worldPos) const {
 
 const MapData& Environment::getMapData() const {
     return m_map;
+}
+
+bool Environment::isDrawingWorkZone() const {
+    return m_isDrawingWorkZone;
 }
 
 bool Environment::shouldDrawGridPreview() const {

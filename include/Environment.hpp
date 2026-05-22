@@ -19,7 +19,8 @@ class Environment {
 public:
     explicit Environment(float gridSize);
 
-    void handleLeftClick(const sf::Vector2f& worldPos);
+    void handleLeftMousePressed(const sf::Vector2f& worldPos);
+    void handleLeftMouseReleased(const sf::Vector2f& worldPos);
     void cancelActiveTool();
     void setEditorMode(EditorMode mode);
     EditorMode getEditorMode() const;
@@ -30,6 +31,7 @@ public:
     bool isObstacleAt(const sf::Vector2f& worldPos) const;
     bool isInsideWorldBounds(const sf::Vector2f& worldPos) const;
     const MapData& getMapData() const;
+    bool isDrawingWorkZone() const;
 
 private:
     void drawGrid(sf::RenderWindow& window, const sf::View& simView);
@@ -46,4 +48,5 @@ private:
     EditorMode m_editorMode;
     std::optional<sf::Vector2f> m_pendingZoneStart;
     std::optional<sf::Vector2f> m_cursorWorldPos;
+    bool m_isDrawingWorkZone;
 };
