@@ -55,11 +55,16 @@ EditorMode Environment::getEditorMode() const {
     return m_editorMode;
 }
 
+void Environment::setCursorWorldPosition(const std::optional<sf::Vector2f>& worldPos) {
+    m_cursorWorldPos = worldPos;
+}
+
 void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
     drawGrid(window, simView);
     drawWorldBoundary(window);
     drawWorkZones(window);
     drawObstacles(window);
+    drawCursorPreview(window);
 
     if (m_map.getRobotStartPose().has_value()) {
         drawPoseMarker(window, *m_map.getRobotStartPose(), sf::Color(60, 179, 113));
@@ -145,6 +150,39 @@ void Environment::drawWorkZones(sf::RenderWindow& window) {
         pendingMarker.setPosition(*m_pendingZoneStart);
         pendingMarker.setFillColor(sf::Color(65, 105, 225));
         window.draw(pendingMarker);
+
+        if (m_cursorWorldPos.has_value() && m_map.containsWorldPoint(*m_cursorWorldPos)) {
+            sf::RectangleShape previewZone;
+            const sf::FloatRect previewBounds = makeRectFromPoints(*m_pendingZoneStart, *m_cursorWorldPos);
+            previewZone.setPosition(previewBounds.position);
+            previewZone.setSize(previewBounds.size);
+            previewZone.setFillColor(sf::Color(65, 105, 225, 40));
+            previewZone.setOutlineThickness(2.0f);
+            previewZone.setOutlineColor(sf::Color(65, 105, 225, 190));
+            window.draw(previewZone);
+        }
+    }
+}
+
+void Environment::drawCursorPreview(sf::RenderWindow& window) {
+    if (!m_cursorWorldPos.has_value() || !m_map.containsWorldPoint(*m_cursorWorldPos)) {
+        return;
+    }
+
+    if (shouldDrawGridPreview()) {
+        sf::RectangleShape previewCell(sf::Vector2f(getGridSize(), getGridSize()));
+        previewCell.setPosition(
+            m_map.getMapper().gridToWorldTopLeft(m_map.getMapper().worldToGrid(*m_cursorWorldPos))
+        );
+        previewCell.setFillColor(sf::Color::Transparent);
+        previewCell.setOutlineThickness(2.0f);
+        previewCell.setOutlineColor(getPreviewColor());
+        window.draw(previewCell);
+        return;
+    }
+
+    if (m_editorMode == EditorMode::SetStartPose || m_editorMode == EditorMode::SetGoalPose) {
+        drawPoseMarker(window, Pose2D{*m_cursorWorldPos, 0.0f}, getPreviewColor());
     }
 }
 
@@ -189,4 +227,29 @@ bool Environment::isInsideWorldBounds(const sf::Vector2f& worldPos) const {
 
 const MapData& Environment::getMapData() const {
     return m_map;
+}
+
+bool Environment::shouldDrawGridPreview() const {
+    return m_editorMode == EditorMode::PlaceObstacle
+        || m_editorMode == EditorMode::DeleteObstacle;
+}
+
+sf::Color Environment::getPreviewColor() const {
+    switch (m_editorMode) {
+    case EditorMode::PlaceObstacle:
+        return sf::Color(46, 139, 87);
+    case EditorMode::DeleteObstacle:
+        return sf::Color(220, 20, 60);
+    case EditorMode::SetStartPose:
+        return sf::Color(60, 179, 113, 180);
+    case EditorMode::SetGoalPose:
+        return sf::Color(220, 20, 60, 180);
+    case EditorMode::DrawWorkZone:
+        return sf::Color(65, 105, 225, 180);
+    case EditorMode::PanView:
+        return sf::Color(255, 165, 0, 180);
+    case EditorMode::Select:
+    default:
+        return sf::Color(80, 80, 80, 180);
+    }
 }
