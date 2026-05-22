@@ -1,90 +1,192 @@
 #include "Environment.hpp"
-#include <cmath> // 引入 cmath 以使用 floor 與 ceil
 
-// Constructor (建構子)：接收網格大小並儲存
-Environment::Environment(float gridSize) : m_gridSize(gridSize) {}
+#include <algorithm>
+#include <cmath>
 
-// 新增障礙物核心邏輯
-void Environment::addObstacle(sf::Vector2f worldPos) {
-    // 座標映射 (Coordinate Mapping)：將真實物理座標轉換為網格索引 (Grid Index)
-    // 透過除以網格大小並無條件捨去 (floor)，精準定位出該點落在哪一個方格內
-    int col = static_cast<int>(std::floor(worldPos.x / m_gridSize));
-    int row = static_cast<int>(std::floor(worldPos.y / m_gridSize));
-    
-    // 將算出的索引加入集合中
-    // 註：std::set 的特性會自動過濾重複值，因此同一個網格被點擊多次也不會影響記憶體或繪圖效能
-    m_obstacles.insert({col, row});
+Environment::Environment(float gridSize)
+    : m_map(gridSize), m_editorMode(EditorMode::PlaceObstacle) {}
+
+void Environment::handleLeftClick(const sf::Vector2f& worldPos) {
+    switch (m_editorMode) {
+    case EditorMode::Select:
+        break;
+    case EditorMode::PlaceObstacle:
+        m_map.addObstacle(worldPos);
+        break;
+    case EditorMode::DeleteObstacle:
+        m_map.removeObstacle(worldPos);
+        break;
+    case EditorMode::SetStartPose:
+        m_map.setRobotStartPose(Pose2D{worldPos, 0.0f});
+        break;
+    case EditorMode::SetGoalPose:
+        m_map.setRobotGoalPose(Pose2D{worldPos, 0.0f});
+        break;
+    case EditorMode::DrawWorkZone:
+        if (!m_map.containsWorldPoint(worldPos)) {
+            return;
+        }
+        if (!m_pendingZoneStart.has_value()) {
+            m_pendingZoneStart = worldPos;
+            return;
+        }
+        m_map.addWorkZone(makeRectFromPoints(*m_pendingZoneStart, worldPos));
+        m_pendingZoneStart.reset();
+        break;
+    case EditorMode::PanView:
+        break;
+    }
 }
 
-// 繪製環境：包含底層網格與上層障礙物
+void Environment::cancelActiveTool() {
+    m_pendingZoneStart.reset();
+}
+
+void Environment::setEditorMode(EditorMode mode) {
+    if (m_editorMode == mode) {
+        return;
+    }
+
+    cancelActiveTool();
+    m_editorMode = mode;
+}
+
+EditorMode Environment::getEditorMode() const {
+    return m_editorMode;
+}
+
 void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
-    // --- 1. 繪製無限網格 (Infinite Grid) ---
-    sf::Vector2f center = simView.getCenter();
-    sf::Vector2f size = simView.getSize();
+    drawGrid(window, simView);
+    drawWorldBoundary(window);
+    drawWorkZones(window);
+    drawObstacles(window);
 
-    float left = center.x - size.x / 2.0f;
-    float right = center.x + size.x / 2.0f;
-    float top = center.y - size.y / 2.0f;
-    float bottom = center.y + size.y / 2.0f;
+    if (m_map.getRobotStartPose().has_value()) {
+        drawPoseMarker(window, *m_map.getRobotStartPose(), sf::Color(60, 179, 113));
+    }
 
-    int startCol = static_cast<int>(std::floor(left / m_gridSize));
-    int endCol = static_cast<int>(std::ceil(right / m_gridSize));
-    int startRow = static_cast<int>(std::floor(top / m_gridSize));
-    int endRow = static_cast<int>(std::ceil(bottom / m_gridSize));
+    if (m_map.getRobotGoalPose().has_value()) {
+        drawPoseMarker(window, *m_map.getRobotGoalPose(), sf::Color(220, 20, 60));
+    }
+}
 
-    // 使用 sf::VertexArray 高效繪製線條 (SFML 3.0.0 聚合初始化寫法)
+void Environment::drawGrid(sf::RenderWindow& window, const sf::View& simView) {
+    const sf::Vector2f center = simView.getCenter();
+    const sf::Vector2f size = simView.getSize();
+    const float gridSize = getGridSize();
+
+    const float left = center.x - size.x / 2.0f;
+    const float right = center.x + size.x / 2.0f;
+    const float top = center.y - size.y / 2.0f;
+    const float bottom = center.y + size.y / 2.0f;
+
+    const int startCol = static_cast<int>(std::floor(left / gridSize));
+    const int endCol = static_cast<int>(std::ceil(right / gridSize));
+    const int startRow = static_cast<int>(std::floor(top / gridSize));
+    const int endRow = static_cast<int>(std::ceil(bottom / gridSize));
+
     sf::VertexArray lines(sf::PrimitiveType::Lines);
-    sf::Color gridColor(210, 210, 210);
-    sf::Color axisColor(150, 150, 150);
+    const sf::Color gridColor(210, 210, 210);
+    const sf::Color axisColor(150, 150, 150);
 
     for (int col = startCol; col <= endCol; ++col) {
-        float x = col * m_gridSize;
-        sf::Color color = (col == 0) ? axisColor : gridColor;
+        const float x = col * gridSize;
+        const sf::Color color = (col == 0) ? axisColor : gridColor;
         lines.append(sf::Vertex{sf::Vector2f(x, top), color});
         lines.append(sf::Vertex{sf::Vector2f(x, bottom), color});
     }
 
     for (int row = startRow; row <= endRow; ++row) {
-        float y = row * m_gridSize;
-        sf::Color color = (row == 0) ? axisColor : gridColor;
+        const float y = row * gridSize;
+        const sf::Color color = (row == 0) ? axisColor : gridColor;
         lines.append(sf::Vertex{sf::Vector2f(left, y), color});
         lines.append(sf::Vertex{sf::Vector2f(right, y), color});
     }
 
     window.draw(lines);
+}
 
-    // --- 2. 繪製障礙物 (Obstacles) ---
-    // 效能優化 (Performance Optimization)：
-    // 只在迴圈外部宣告「一個」方塊形狀，而不是為每個障礙物都建立新的物件。
-    sf::RectangleShape obstacleShape(sf::Vector2f(m_gridSize, m_gridSize));
-    obstacleShape.setFillColor(sf::Color(100, 100, 100)); // 深灰色
-    
-    // 設定內縮的外框線 (Outline)，使得相鄰的方塊也能明顯看出網格分隔
+void Environment::drawWorldBoundary(sf::RenderWindow& window) {
+    sf::RectangleShape boundaryShape(m_map.getWorldBoundary().size);
+    boundaryShape.setPosition(m_map.getWorldBoundary().position);
+    boundaryShape.setFillColor(sf::Color::Transparent);
+    boundaryShape.setOutlineThickness(2.0f);
+    boundaryShape.setOutlineColor(sf::Color(120, 120, 120));
+    window.draw(boundaryShape);
+}
+
+void Environment::drawObstacles(sf::RenderWindow& window) {
+    sf::RectangleShape obstacleShape(sf::Vector2f(getGridSize(), getGridSize()));
+    obstacleShape.setFillColor(sf::Color(100, 100, 100));
     obstacleShape.setOutlineThickness(-1.0f);
     obstacleShape.setOutlineColor(sf::Color(50, 50, 50));
 
-    // 遍歷 (Iterate) 集合中的每一個網格索引，更新座標並繪製
-    for (const auto& index : m_obstacles) {
-        // 將索引反向轉換為實體螢幕座標
-        float x = index.first * m_gridSize;
-        float y = index.second * m_gridSize;
-        obstacleShape.setPosition(sf::Vector2f(x, y));
+    for (const auto& coord : m_map.getObstacles()) {
+        obstacleShape.setPosition(m_map.getMapper().gridToWorldTopLeft(coord));
         window.draw(obstacleShape);
     }
 }
 
+void Environment::drawWorkZones(sf::RenderWindow& window) {
+    sf::RectangleShape zoneShape;
+    zoneShape.setFillColor(sf::Color(100, 149, 237, 50));
+    zoneShape.setOutlineThickness(2.0f);
+    zoneShape.setOutlineColor(sf::Color(65, 105, 225));
 
-// 檢查特定物理座標是否落在障礙物網格內
-bool Environment::isObstacleAt(sf::Vector2f worldPos) const {
-    // 1. 將實體座標轉換為網格索引 (與 addObstacle 的邏輯完全相同)
-    int col = static_cast<int>(std::floor(worldPos.x / m_gridSize));
-    int row = static_cast<int>(std::floor(worldPos.y / m_gridSize));
+    for (const auto& zone : m_map.getWorkZones()) {
+        zoneShape.setPosition(zone.bounds.position);
+        zoneShape.setSize(zone.bounds.size);
+        window.draw(zoneShape);
+    }
 
-    // 2. 在集合中尋找該索引。如果找到了 (不等於 end)，代表撞到障礙物了
-    return m_obstacles.find({col, row}) != m_obstacles.end();
+    if (m_pendingZoneStart.has_value()) {
+        sf::CircleShape pendingMarker(6.0f);
+        pendingMarker.setOrigin(sf::Vector2f(6.0f, 6.0f));
+        pendingMarker.setPosition(*m_pendingZoneStart);
+        pendingMarker.setFillColor(sf::Color(65, 105, 225));
+        window.draw(pendingMarker);
+    }
 }
 
-// 取得網格大小
+void Environment::drawPoseMarker(sf::RenderWindow& window, const Pose2D& pose, const sf::Color& color) {
+    sf::CircleShape marker(10.0f, 24);
+    marker.setOrigin(sf::Vector2f(10.0f, 10.0f));
+    marker.setPosition(pose.position);
+    marker.setFillColor(color);
+    window.draw(marker);
+
+    sf::VertexArray headingLine(sf::PrimitiveType::Lines, 2);
+    headingLine[0] = sf::Vertex{pose.position, color};
+    headingLine[1] = sf::Vertex{
+        sf::Vector2f(
+            pose.position.x + std::cos(pose.heading) * 18.0f,
+            pose.position.y + std::sin(pose.heading) * 18.0f
+        ),
+        color
+    };
+    window.draw(headingLine);
+}
+
+sf::FloatRect Environment::makeRectFromPoints(const sf::Vector2f& start, const sf::Vector2f& end) const {
+    const float left = std::min(start.x, end.x);
+    const float top = std::min(start.y, end.y);
+    const float width = std::abs(end.x - start.x);
+    const float height = std::abs(end.y - start.y);
+    return sf::FloatRect(sf::Vector2f(left, top), sf::Vector2f(width, height));
+}
+
 float Environment::getGridSize() const {
-    return m_gridSize;
+    return m_map.getGridResolution();
+}
+
+bool Environment::isObstacleAt(const sf::Vector2f& worldPos) const {
+    return m_map.isObstacleAt(worldPos);
+}
+
+bool Environment::isInsideWorldBounds(const sf::Vector2f& worldPos) const {
+    return m_map.containsWorldPoint(worldPos);
+}
+
+const MapData& Environment::getMapData() const {
+    return m_map;
 }

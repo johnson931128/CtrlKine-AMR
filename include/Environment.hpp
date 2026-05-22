@@ -1,28 +1,44 @@
 #pragma once
+
 #include <SFML/Graphics.hpp>
-#include <set>
-#include <utility> // 為了使用 std::pair
+#include <optional>
+
+#include "MapData.hpp"
+
+enum class EditorMode {
+    Select,
+    PlaceObstacle,
+    DeleteObstacle,
+    SetStartPose,
+    SetGoalPose,
+    DrawWorkZone,
+    PanView
+};
 
 class Environment {
 public:
-    // Constructor (建構子)：初始化時設定網格尺寸
-    Environment(float gridSize);
+    explicit Environment(float gridSize);
 
-    // 新增障礙物：傳入從滑鼠轉換過來的「真實物理座標」
-    void addObstacle(sf::Vector2f worldPos);
+    void handleLeftClick(const sf::Vector2f& worldPos);
+    void cancelActiveTool();
+    void setEditorMode(EditorMode mode);
+    EditorMode getEditorMode() const;
 
-    // 繪製環境：負責畫出無限網格與所有被放置的障礙物方塊
     void draw(sf::RenderWindow& window, const sf::View& simView);
-
-    // 取得網格大小，供外部運算參考
     float getGridSize() const;
-
-    // 新增：給定一個實體座標，檢查該座標所在的網格是否為障礙物
-    bool isObstacleAt(sf::Vector2f worldPos) const;
+    bool isObstacleAt(const sf::Vector2f& worldPos) const;
+    bool isInsideWorldBounds(const sf::Vector2f& worldPos) const;
+    const MapData& getMapData() const;
 
 private:
-    float m_gridSize;
+    void drawGrid(sf::RenderWindow& window, const sf::View& simView);
+    void drawWorldBoundary(sf::RenderWindow& window);
+    void drawObstacles(sf::RenderWindow& window);
+    void drawWorkZones(sf::RenderWindow& window);
+    void drawPoseMarker(sf::RenderWindow& window, const Pose2D& pose, const sf::Color& color);
+    sf::FloatRect makeRectFromPoints(const sf::Vector2f& start, const sf::Vector2f& end) const;
 
-    // 資料結構：儲存含有障礙物的網格索引 (X 欄, Y 列)
-    std::set<std::pair<int, int>> m_obstacles;
+    MapData m_map;
+    EditorMode m_editorMode;
+    std::optional<sf::Vector2f> m_pendingZoneStart;
 };

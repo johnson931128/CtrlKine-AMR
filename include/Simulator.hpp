@@ -1,9 +1,11 @@
 #pragma once
+
 #include <SFML/Graphics.hpp>
 #include <optional>
 #include <string>
+
 #include "AMR.hpp"
-#include "Environment.hpp" // 新增：引入環境類別
+#include "Environment.hpp"
 
 class Simulator {
 public:
@@ -15,6 +17,7 @@ private:
     void update(float dt);
     void render();
     void loadConfig(const std::string& filename);
+    void handleEditorHotkeys(const sf::Event& event);
 
     sf::RenderWindow m_window;
     sf::View m_uiView;
@@ -25,9 +28,9 @@ private:
 
     AMRConfig m_amrConfig;
     AMR m_amr;
-    
-    // 新增：宣告環境物件
-    Environment m_env; 
+    Environment m_env;
 
     sf::Clock m_clock;
+    bool m_isPanning;
+    sf::Vector2i m_lastPanPixel;
 };
