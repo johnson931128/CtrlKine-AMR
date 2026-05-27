@@ -249,6 +249,20 @@ const MapData& Environment::getMapData() const {
     return m_map;
 }
 
+bool Environment::saveMapToFile(const std::string& filename) const {
+    return m_map.saveToFile(filename);
+}
+
+bool Environment::loadMapFromFile(const std::string& filename) {
+    cancelActiveTool();
+    return m_map.loadFromFile(filename);
+}
+
+void Environment::clearMap() {
+    cancelActiveTool();
+    m_map.clear();
+}
+
 bool Environment::isDrawingWorkZone() const {
     return m_isDrawingWorkZone;
 }

@@ -1,0 +1,13 @@
+grid_resolution 50
+world_boundary -1000 -1000 2000 2000
+start_pose none
+goal_pose none
+obstacle_count 7
+obstacle 13 3
+obstacle 13 4
+obstacle 13 5
+obstacle 13 6
+obstacle 13 7
+obstacle 13 8
+obstacle 13 9
+work_zone_count 0

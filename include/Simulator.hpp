@@ -20,8 +20,10 @@ private:
     void handleEditorHotkeys(const sf::Event& event);
     void drawToolbar();
     void drawInspector();
-    std::string getModeLabel(EditorMode mode) const;
     void updateCursorPreview();
+    void saveMap();
+    void loadMap();
+    bool handleToolbarClick(const sf::Vector2i& pixelPos);
 
     sf::RenderWindow m_window;
     sf::View m_uiView;
@@ -42,4 +44,6 @@ private:
     sf::Vector2i m_lastPanPixel;
     std::optional<sf::Vector2f> m_hoverWorldPos;
     sf::FloatRect m_simViewportRect;
+    std::string m_mapFilename;
+    std::string m_statusMessage;
 };

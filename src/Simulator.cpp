@@ -10,6 +10,11 @@ constexpr unsigned int kWindowWidth = 1280;
 constexpr unsigned int kWindowHeight = 800;
 constexpr float kToolbarHeight = 64.0f;
 constexpr float kInspectorWidth = 260.0f;
+constexpr float kToolbarButtonWidth = 42.0f;
+constexpr float kToolbarButtonHeight = 30.0f;
+constexpr float kToolbarButtonGap = 8.0f;
+constexpr float kToolbarButtonStartX = 16.0f;
+constexpr float kToolbarButtonY = 16.0f;
 
 bool loadUiFont(sf::Font& font) {
     const std::array<const char*, 4> fontPaths = {
@@ -37,7 +42,9 @@ Simulator::Simulator()
       m_env(50.0f),
       m_isPanning(false),
       m_lastPanPixel({0, 0}),
-      m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)) {
+      m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
+      m_mapFilename("saved_map.txt"),
+      m_statusMessage("Ready") {
     loadConfig("config.txt");
     m_hasUiFont = loadUiFont(m_uiFont);
     m_amr = AMR(m_amrConfig, sf::Vector2f({400.0f, 400.0f}));
@@ -88,6 +95,18 @@ void Simulator::loadConfig(const std::string& filename) {
     }
 }
 
+void Simulator::saveMap() {
+    m_statusMessage = m_env.saveMapToFile(m_mapFilename)
+        ? "Saved map to " + m_mapFilename
+        : "Failed to save map";
+}
+
+void Simulator::loadMap() {
+    m_statusMessage = m_env.loadMapFromFile(m_mapFilename)
+        ? "Loaded map from " + m_mapFilename
+        : "Failed to load map";
+}
+
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
     if (const auto* keyPressed = event.getIf<sf::Event::KeyPressed>()) {
         switch (keyPressed->code) {
@@ -126,31 +145,44 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
                 m_env.setEditorMode(EditorMode::Select);
             }
             break;
+        case sf::Keyboard::Key::F5:
+            saveMap();
+            break;
+        case sf::Keyboard::Key::F9:
+            loadMap();
+            break;
         default:
             break;
         }
     }
 }
 
-std::string Simulator::getModeLabel(EditorMode mode) const {
-    switch (mode) {
-    case EditorMode::Select:
-        return "Select";
-    case EditorMode::PlaceObstacle:
-        return "Add Obstacle";
-    case EditorMode::DeleteObstacle:
-        return "Delete Obstacle";
-    case EditorMode::SetStartPose:
-        return "Set Start";
-    case EditorMode::SetGoalPose:
-        return "Set Goal";
-    case EditorMode::DrawWorkZone:
-        return "Draw Work Zone";
-    case EditorMode::PanView:
-        return "Pan View";
-    default:
-        return "Unknown";
+bool Simulator::handleToolbarClick(const sf::Vector2i& pixelPos) {
+    const std::array<EditorMode, 7> modes = {{
+        EditorMode::Select,
+        EditorMode::PlaceObstacle,
+        EditorMode::DeleteObstacle,
+        EditorMode::SetStartPose,
+        EditorMode::SetGoalPose,
+        EditorMode::DrawWorkZone,
+        EditorMode::PanView
+    }};
+
+    for (std::size_t i = 0; i < modes.size(); ++i) {
+        const float x = kToolbarButtonStartX + static_cast<float>(i) * (kToolbarButtonWidth + kToolbarButtonGap);
+        const sf::FloatRect buttonRect(
+            sf::Vector2f(x, kToolbarButtonY),
+            sf::Vector2f(kToolbarButtonWidth, kToolbarButtonHeight)
+        );
+
+        if (buttonRect.contains(sf::Vector2f(static_cast<float>(pixelPos.x), static_cast<float>(pixelPos.y)))) {
+            m_env.setEditorMode(modes[i]);
+            m_statusMessage = "Switched mode";
+            return true;
+        }
     }
+
+    return false;
 }
 
 void Simulator::updateCursorPreview() {
@@ -199,6 +231,13 @@ void Simulator::processEvents() {
         }
 
         if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
+            if (mouseBtn->button == sf::Mouse::Button::Left
+                && mouseBtn->position.y >= 0
+                && mouseBtn->position.y < static_cast<int>(kToolbarHeight)
+                && handleToolbarClick(mouseBtn->position)) {
+                continue;
+            }
+
             const bool insideSimArea = mouseBtn->position.x >= static_cast<int>(m_simViewportRect.position.x)
                 && mouseBtn->position.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
                 && mouseBtn->position.y >= static_cast<int>(m_simViewportRect.position.y)
@@ -296,23 +335,20 @@ void Simulator::drawToolbar() {
     }
 
     const std::array<std::pair<EditorMode, std::string>, 7> tools = {{
-        {EditorMode::Select, "[S]"},
-        {EditorMode::PlaceObstacle, "[O]"},
-        {EditorMode::DeleteObstacle, "[E]"},
-        {EditorMode::SetStartPose, "[T]"},
-        {EditorMode::SetGoalPose, "[G]"},
-        {EditorMode::DrawWorkZone, "[Z]"},
-        {EditorMode::PanView, "[P]"}
+        {EditorMode::Select, "S"},
+        {EditorMode::PlaceObstacle, "O"},
+        {EditorMode::DeleteObstacle, "E"},
+        {EditorMode::SetStartPose, "T"},
+        {EditorMode::SetGoalPose, "G"},
+        {EditorMode::DrawWorkZone, "Z"},
+        {EditorMode::PanView, "P"}
     }};
 
-    constexpr float buttonWidth = 42.0f;
-    constexpr float buttonHeight = 30.0f;
-    constexpr float buttonGap = 8.0f;
-    float x = 16.0f;
+    float x = kToolbarButtonStartX;
     for (std::size_t i = 0; i < tools.size(); ++i) {
         const auto& [mode, label] = tools[i];
-        sf::RectangleShape buttonBg(sf::Vector2f(buttonWidth, buttonHeight));
-        buttonBg.setPosition(sf::Vector2f(x, 16.0f));
+        sf::RectangleShape buttonBg(sf::Vector2f(kToolbarButtonWidth, kToolbarButtonHeight));
+        buttonBg.setPosition(sf::Vector2f(x, kToolbarButtonY));
         buttonBg.setFillColor(
             mode == m_env.getEditorMode() ? sf::Color(70, 130, 180, 40) : sf::Color(255, 255, 255, 0)
         );
@@ -324,9 +360,9 @@ void Simulator::drawToolbar() {
 
         sf::Text toolText(m_uiFont, label, 16);
         toolText.setFillColor(mode == m_env.getEditorMode() ? sf::Color(25, 70, 120) : sf::Color(60, 60, 60));
-        toolText.setPosition(sf::Vector2f(x + 6.0f, 22.0f));
+        toolText.setPosition(sf::Vector2f(x + 13.0f, 22.0f));
         m_window.draw(toolText);
-        x += buttonWidth + buttonGap;
+        x += kToolbarButtonWidth + kToolbarButtonGap;
     }
 }
 
@@ -419,5 +455,21 @@ void Simulator::drawInspector() {
         zoneHint.setFillColor(sf::Color(70, 70, 70));
         zoneHint.setPosition(sf::Vector2f(panelX, y));
         m_window.draw(zoneHint);
+        y += 78.0f;
     }
+
+    sf::Text ioHint(m_uiFont, "F5 Save\nF9 Load", 16);
+    ioHint.setFillColor(sf::Color(70, 70, 70));
+    ioHint.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(ioHint);
+
+    sf::Text statusTitle(m_uiFont, "Status", 19);
+    statusTitle.setFillColor(sf::Color(45, 45, 45));
+    statusTitle.setPosition(sf::Vector2f(panelX, y + 62.0f));
+    m_window.draw(statusTitle);
+
+    sf::Text statusText(m_uiFont, m_statusMessage, 16);
+    statusText.setFillColor(sf::Color(75, 75, 75));
+    statusText.setPosition(sf::Vector2f(panelX, y + 92.0f));
+    m_window.draw(statusText);
 }

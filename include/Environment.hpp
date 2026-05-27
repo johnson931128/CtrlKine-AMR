@@ -31,6 +31,9 @@ public:
     bool isObstacleAt(const sf::Vector2f& worldPos) const;
     bool isInsideWorldBounds(const sf::Vector2f& worldPos) const;
     const MapData& getMapData() const;
+    bool saveMapToFile(const std::string& filename) const;
+    bool loadMapFromFile(const std::string& filename);
+    void clearMap();
     bool isDrawingWorkZone() const;
 
 private:

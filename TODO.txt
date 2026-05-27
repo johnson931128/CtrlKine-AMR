@@ -1,0 +1,6 @@
+[x] Save / Load Map using a human-readable text format
+[x] Toolbar mouse click to switch editor mode
+[ ] Real Select mode with selected-object inspector
+[ ] Delete support for work zones / start pose / goal pose
+[ ] Start / Goal heading editing
+[ ] Clear Map and Reset View actions

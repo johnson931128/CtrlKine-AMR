@@ -3,6 +3,7 @@
 #include <SFML/Graphics.hpp>
 #include <optional>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "CoordinateTypes.hpp"
@@ -16,11 +17,15 @@ public:
     explicit MapData(float gridResolution = 50.0f);
 
     float getGridResolution() const;
+    void setGridResolution(float gridResolution);
     const CoordinateMapper& getMapper() const;
 
     const sf::FloatRect& getWorldBoundary() const;
     void setWorldBoundary(const sf::FloatRect& boundary);
     bool containsWorldPoint(const sf::Vector2f& worldPos) const;
+    void clear();
+    bool saveToFile(const std::string& filename) const;
+    bool loadFromFile(const std::string& filename);
 
     void addObstacle(const sf::Vector2f& worldPos);
     void addObstacle(const GridCoord& coord);
