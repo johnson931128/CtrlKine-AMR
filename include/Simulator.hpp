@@ -6,6 +6,7 @@
 
 #include "AMR.hpp"
 #include "Environment.hpp"
+#include "SelectedObject.hpp"
 
 class Simulator {
 public:
@@ -24,6 +25,11 @@ private:
     void saveMap();
     void loadMap();
     bool handleToolbarClick(const sf::Vector2i& pixelPos);
+    void selectObjectAt(const sf::Vector2f& worldPos);
+    void clearSelection();
+    bool deleteSelectedObject();
+    bool rotateSelectedHeading(float deltaRadians);
+    void syncSelectionToEnvironment();
 
     sf::RenderWindow m_window;
     sf::View m_uiView;
@@ -46,4 +52,5 @@ private:
     sf::FloatRect m_simViewportRect;
     std::string m_mapFilename;
     std::string m_statusMessage;
+    SelectedObject m_selectedObject;
 };

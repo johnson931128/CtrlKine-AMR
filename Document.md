@@ -1,96 +1,125 @@
 # CtrlKine-AMR User Document
 
-這份文件記錄目前應用程式已經可以做的操作、功能，以及對應的快捷鍵。
+This document records what the application can do right now and how to operate it.
 
 ## Current Features
 
 - `Select` mode
-  目前是基礎模式，主要作為返回中性操作狀態使用。
+  Click objects on the simulation canvas to select them.
 - `Obstacle` mode
-  在格線上放置障礙物。
+  Place obstacle cells on the grid.
 - `Erase` mode
-  刪除格線上的障礙物。
+  Delete obstacles, work zones, start pose, or goal pose by clicking them.
 - `Set Start` mode
-  設定地圖上的起點位置。
+  Place the map start pose and keep its heading.
 - `Set Goal` mode
-  設定地圖上的終點位置。
+  Place the map goal pose and keep its heading.
 - `Work Zone` mode
-  以拖曳方式建立工作區域，並自動吸附到 grid corner。
+  Drag to create a grid-aligned work zone rectangle.
 - `Pan` mode
-  用滑鼠拖曳平移視角。
+  Drag the canvas to move the current view.
 - `Zoom`
-  在模擬畫布上使用滑鼠滾輪放大或縮小。
+  Use the mouse wheel over the simulation canvas.
 - `Save / Load Map`
-  可將目前地圖存成文字檔，並重新載入。
+  Save the current map to a text file and load it later.
 
 ## Toolbar
 
-上方工具列目前是可點擊的，也可以用快捷鍵切換：
+The top toolbar supports both mouse click and keyboard shortcut switching:
 
-- `S` 或 `1`
+- `S` or `1`
   Select
-- `O` 或 `2`
+- `O` or `2`
   Obstacle
-- `E` 或 `3`
+- `E` or `3`
   Erase
-- `T` 或 `4`
+- `T` or `4`
   Set Start
-- `G` 或 `5`
+- `G` or `5`
   Set Goal
-- `Z` 或 `6`
+- `Z` or `6`
   Work Zone
-- `P` 或 `7`
+- `P` or `7`
   Pan
 
 ## Mouse Controls
 
 - `Left Click`
-  依目前模式執行動作。
+  Perform the current tool action.
 - `Left Drag` in `Pan`
-  平移模擬畫布。
+  Move the simulation view.
 - `Left Drag` in `Work Zone`
-  從起點拖曳到終點建立矩形工作區。
+  Create a rectangular work zone.
 - `Mouse Wheel`
-  在模擬畫布區域內縮放視角。
+  Zoom in or out on the simulation canvas.
 
 ## Keyboard Controls
 
 - `Up / Down`
-  控制 AMR 前進 / 後退。
+  Move the AMR forward or backward.
 - `A / D`
-  控制 AMR 左轉 / 右轉。
+  Rotate the AMR left or right.
+- `Delete`
+  Delete the currently selected obstacle, work zone, start pose, or goal pose.
+- `Q`
+  Rotate the selected start pose or goal pose counterclockwise in `Select` mode.
+- `E`
+  Rotate the selected start pose or goal pose clockwise in `Select` mode.
+  If no start / goal pose is selected, it still switches to `Erase` mode.
 - `Esc`
-  取消當前工具操作。
-  如果目前在 `Work Zone` 模式，也會回到 `Select`。
+  Cancel the current tool action.
+  If the current mode is `Work Zone`, it also returns to `Select`.
 - `F5`
-  儲存地圖到 `saved_map.txt`
+  Save the map to `saved_map.txt`
 - `F9`
-  從 `saved_map.txt` 載入地圖
+  Load the map from `saved_map.txt`
 
 ## Inspector
 
-右側 `Inspector` 目前會顯示：
+The right inspector currently shows:
 
 - `Cursor`
-  游標當前的 world 座標與 grid 座標。
+  Current world and grid coordinate under the mouse.
 - `Map Stats`
-  Grid resolution、障礙物數量、work zone 數量、start/goal 是否已設定。
+  Grid resolution, obstacle count, work zone count, and whether start / goal are set.
+- `Selected Object`
+  Details for the currently selected object.
 - `Robot State`
-  AMR 的位置、朝向角度、目前控制模式。
+  Robot position and heading.
 - `Status`
-  最近一次存檔、讀檔、模式切換等狀態訊息。
+  Recent operation result such as save, load, mode switch, or deletion.
+
+## Selected Object Details
+
+When an object is selected in `Select` mode:
+
+- `Obstacle`
+  Shows grid coordinate and world top-left position.
+- `Work Zone`
+  Shows position and size.
+- `Start Pose`
+  Shows position and heading.
+  The marker also displays a direction arrow on the canvas.
+- `Goal Pose`
+  Shows position and heading.
+  The marker also displays a direction arrow on the canvas.
+- `Robot`
+  Shows robot position and heading.
+
+Hit test priority is:
+
+1. `Start Pose`
+2. `Goal Pose`
+3. `Work Zone`
+4. `Obstacle`
+5. `Robot`
+6. `None`
 
 ## Save / Load Format
 
-目前地圖會存成純文字檔 `saved_map.txt`。
+The map is stored as a human-readable text file named `saved_map.txt`.
 
-選這種格式的原因：
-
-- 人眼可讀，除錯方便
-- 不需要額外套件
-- 很容易擴充更多欄位
-
-目前會儲存的內容：
+Saved data includes:
 
 - `grid_resolution`
 - `world_boundary`
@@ -99,25 +128,23 @@
 - `obstacles`
 - `work_zones`
 
-這不是圖片格式，所以不會存畫面外觀，而是存「真正的地圖資料」。
+`start_pose` and `goal_pose` store both position and heading, so heading is preserved after save and load.
 
-## Current Workflow
+This is not an image export. It stores the actual editable map data.
 
-一個典型使用流程如下：
+## Typical Workflow
 
-1. 用 `O` 放置障礙物
-2. 用 `T` 設定起點
-3. 用 `G` 設定終點
-4. 用 `Z` 拖曳建立工作區
-5. 用 `F5` 儲存地圖
-6. 之後用 `F9` 載入地圖繼續編輯
+1. Press `O` and place obstacles.
+2. Press `T` and set the start pose.
+3. Press `G` and set the goal pose.
+4. Press `S` and click the start pose or goal pose if you want to edit its heading.
+5. Press `Q / E` to rotate the selected pose.
+6. Press `Z` and drag a work zone.
+7. Press `Delete` if you want to remove the selected object.
+8. Press `F5` to save the map.
+9. Press `F9` to load it later.
 
-## Current Limitations
+## Remaining TODO
 
-目前還沒做完，但已經在 TODO 裡的項目：
-
-- `Select` 尚未真的選取物件
-- `Inspector` 還不能顯示 selected object 詳細資訊
-- `Delete` 還沒有支援刪除 work zone / start / goal
-- `Start / Goal` 還沒有方向設定
-- `Clear Map` / `Reset View` 還沒加入
+- `Clear Map`
+- `Reset View`

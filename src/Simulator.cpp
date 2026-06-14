@@ -15,6 +15,7 @@ constexpr float kToolbarButtonHeight = 30.0f;
 constexpr float kToolbarButtonGap = 8.0f;
 constexpr float kToolbarButtonStartX = 16.0f;
 constexpr float kToolbarButtonY = 16.0f;
+constexpr float kHeadingStepRadians = 0.17453292f;
 
 bool loadUiFont(sf::Font& font) {
     const std::array<const char*, 4> fontPaths = {
@@ -44,7 +45,8 @@ Simulator::Simulator()
       m_lastPanPixel({0, 0}),
       m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
       m_mapFilename("saved_map.txt"),
-      m_statusMessage("Ready") {
+      m_statusMessage("Ready"),
+      m_selectedObject(SelectedObject::none()) {
     loadConfig("config.txt");
     m_hasUiFont = loadUiFont(m_uiFont);
     m_amr = AMR(m_amrConfig, sf::Vector2f({400.0f, 400.0f}));
@@ -102,9 +104,12 @@ void Simulator::saveMap() {
 }
 
 void Simulator::loadMap() {
-    m_statusMessage = m_env.loadMapFromFile(m_mapFilename)
-        ? "Loaded map from " + m_mapFilename
-        : "Failed to load map";
+    if (m_env.loadMapFromFile(m_mapFilename)) {
+        clearSelection();
+        m_statusMessage = "Loaded map from " + m_mapFilename;
+    } else {
+        m_statusMessage = "Failed to load map";
+    }
 }
 
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
@@ -119,8 +124,19 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
             m_env.setEditorMode(EditorMode::PlaceObstacle);
             break;
         case sf::Keyboard::Key::Num3:
-        case sf::Keyboard::Key::E:
             m_env.setEditorMode(EditorMode::DeleteObstacle);
+            break;
+        case sf::Keyboard::Key::Q:
+            if (rotateSelectedHeading(-kHeadingStepRadians)) {
+                m_statusMessage = "Rotated selected pose";
+            }
+            break;
+        case sf::Keyboard::Key::E:
+            if (rotateSelectedHeading(kHeadingStepRadians)) {
+                m_statusMessage = "Rotated selected pose";
+            } else {
+                m_env.setEditorMode(EditorMode::DeleteObstacle);
+            }
             break;
         case sf::Keyboard::Key::Num4:
         case sf::Keyboard::Key::T:
@@ -143,6 +159,14 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
             m_isPanning = false;
             if (m_env.getEditorMode() == EditorMode::DrawWorkZone) {
                 m_env.setEditorMode(EditorMode::Select);
+            }
+            if (!m_selectedObject.isNone()) {
+                clearSelection();
+            }
+            break;
+        case sf::Keyboard::Key::Delete:
+            if (deleteSelectedObject()) {
+                m_statusMessage = "Deleted selected object";
             }
             break;
         case sf::Keyboard::Key::F5:
@@ -183,6 +207,51 @@ bool Simulator::handleToolbarClick(const sf::Vector2i& pixelPos) {
     }
 
     return false;
+}
+
+void Simulator::selectObjectAt(const sf::Vector2f& worldPos) {
+    SelectedObject selectedObject = m_env.hitTest(worldPos);
+    if (selectedObject.isNone() && m_amr.containsPoint(worldPos)) {
+        selectedObject = SelectedObject::robot();
+    }
+
+    m_selectedObject = selectedObject;
+    syncSelectionToEnvironment();
+    m_statusMessage = m_selectedObject.isNone() ? "Selection cleared" : "Selected object";
+}
+
+void Simulator::clearSelection() {
+    m_selectedObject = SelectedObject::none();
+    syncSelectionToEnvironment();
+}
+
+bool Simulator::deleteSelectedObject() {
+    if (m_selectedObject.isNone() || m_selectedObject.type == SelectedObjectType::Robot) {
+        return false;
+    }
+
+    const bool deleted = m_env.deleteSelectedObject(m_selectedObject);
+    if (deleted) {
+        clearSelection();
+    }
+    return deleted;
+}
+
+bool Simulator::rotateSelectedHeading(float deltaRadians) {
+    if (m_env.getEditorMode() != EditorMode::Select) {
+        return false;
+    }
+
+    if (m_selectedObject.type != SelectedObjectType::StartPose
+        && m_selectedObject.type != SelectedObjectType::GoalPose) {
+        return false;
+    }
+
+    return m_env.rotateSelectedHeading(m_selectedObject, deltaRadians);
+}
+
+void Simulator::syncSelectionToEnvironment() {
+    m_env.setSelectedObject(m_selectedObject);
 }
 
 void Simulator::updateCursorPreview() {
@@ -248,6 +317,20 @@ void Simulator::processEvents() {
                 if (m_env.getEditorMode() == EditorMode::PanView) {
                     m_isPanning = true;
                     m_lastPanPixel = mouseBtn->position;
+                } else if (m_env.getEditorMode() == EditorMode::Select) {
+                    selectObjectAt(worldPos);
+                } else if (m_env.getEditorMode() == EditorMode::DeleteObstacle) {
+                    SelectedObject deletedObject = SelectedObject::none();
+                    if (m_env.deleteObjectAt(worldPos, &deletedObject)) {
+                        if (m_selectedObject.type == deletedObject.type
+                            && m_selectedObject.obstacleCoord == deletedObject.obstacleCoord
+                            && m_selectedObject.workZoneIndex == deletedObject.workZoneIndex) {
+                            clearSelection();
+                        } else {
+                            syncSelectionToEnvironment();
+                        }
+                        m_statusMessage = "Deleted object";
+                    }
                 } else {
                     m_env.handleLeftMousePressed(worldPos);
                 }
@@ -320,6 +403,16 @@ void Simulator::render() {
     m_env.draw(m_window, m_simView);
     m_amr.draw(m_window);
 
+    if (m_selectedObject.type == SelectedObjectType::Robot) {
+        const std::vector<sf::Vector2f> robotCorners = m_amr.getCorners();
+        sf::VertexArray outline(sf::PrimitiveType::LineStrip, 5);
+        for (std::size_t i = 0; i < 4; ++i) {
+            outline[i] = sf::Vertex{robotCorners[i], sf::Color(255, 165, 0)};
+        }
+        outline[4] = sf::Vertex{robotCorners[0], sf::Color(255, 165, 0)};
+        m_window.draw(outline);
+    }
+
     m_window.setView(m_uiView);
     drawToolbar();
     drawInspector();
@@ -383,10 +476,10 @@ void Simulator::drawInspector() {
     m_window.draw(title);
     y += 42.0f;
 
-    sf::Text section1(m_uiFont, "Cursor", 19);
-    section1.setFillColor(sf::Color(45, 45, 45));
-    section1.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(section1);
+    sf::Text cursorTitle(m_uiFont, "Cursor", 19);
+    cursorTitle.setFillColor(sf::Color(45, 45, 45));
+    cursorTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(cursorTitle);
     y += 28.0f;
 
     std::ostringstream cursorInfo;
@@ -405,13 +498,14 @@ void Simulator::drawInspector() {
     m_window.draw(cursorText);
     y += 70.0f;
 
-    sf::Text section2(m_uiFont, "Map Stats", 19);
-    section2.setFillColor(sf::Color(45, 45, 45));
-    section2.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(section2);
+    const MapData& map = m_env.getMapData();
+
+    sf::Text mapStatsTitle(m_uiFont, "Map Stats", 19);
+    mapStatsTitle.setFillColor(sf::Color(45, 45, 45));
+    mapStatsTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(mapStatsTitle);
     y += 28.0f;
 
-    const MapData& map = m_env.getMapData();
     std::ostringstream mapInfo;
     mapInfo << "Grid: " << static_cast<int>(map.getGridResolution()) << "\n"
             << "Obstacles: " << map.getObstacles().size() << "\n"
@@ -425,10 +519,73 @@ void Simulator::drawInspector() {
     m_window.draw(mapText);
     y += 120.0f;
 
-    sf::Text section3(m_uiFont, "Robot State", 19);
-    section3.setFillColor(sf::Color(45, 45, 45));
-    section3.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(section3);
+    sf::Text selectedTitle(m_uiFont, "Selected Object", 19);
+    selectedTitle.setFillColor(sf::Color(45, 45, 45));
+    selectedTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(selectedTitle);
+    y += 28.0f;
+
+    std::ostringstream selectedInfo;
+    switch (m_selectedObject.type) {
+    case SelectedObjectType::Obstacle:
+        if (m_selectedObject.obstacleCoord.has_value()) {
+            const sf::Vector2f worldTopLeft = map.getMapper().gridToWorldTopLeft(*m_selectedObject.obstacleCoord);
+            selectedInfo << "Type: Obstacle\n"
+                         << "Grid: (" << m_selectedObject.obstacleCoord->col << ", "
+                         << m_selectedObject.obstacleCoord->row << ")\n"
+                         << "World: (" << static_cast<int>(worldTopLeft.x) << ", "
+                         << static_cast<int>(worldTopLeft.y) << ")";
+        }
+        break;
+    case SelectedObjectType::WorkZone:
+        if (m_selectedObject.workZoneIndex.has_value()
+            && *m_selectedObject.workZoneIndex < map.getWorkZones().size()) {
+            const WorkZone& zone = map.getWorkZones()[*m_selectedObject.workZoneIndex];
+            selectedInfo << "Type: Work Zone\n"
+                         << "Position: (" << static_cast<int>(zone.bounds.position.x) << ", "
+                         << static_cast<int>(zone.bounds.position.y) << ")\n"
+                         << "Size: (" << static_cast<int>(zone.bounds.size.x) << ", "
+                         << static_cast<int>(zone.bounds.size.y) << ")";
+        }
+        break;
+    case SelectedObjectType::StartPose:
+        if (map.getRobotStartPose().has_value()) {
+            selectedInfo << "Type: Start Pose\n"
+                         << "Position: (" << static_cast<int>(map.getRobotStartPose()->position.x) << ", "
+                         << static_cast<int>(map.getRobotStartPose()->position.y) << ")\n"
+                         << "Heading: " << static_cast<int>(map.getRobotStartPose()->heading * 57.2958f) << " deg";
+        }
+        break;
+    case SelectedObjectType::GoalPose:
+        if (map.getRobotGoalPose().has_value()) {
+            selectedInfo << "Type: Goal Pose\n"
+                         << "Position: (" << static_cast<int>(map.getRobotGoalPose()->position.x) << ", "
+                         << static_cast<int>(map.getRobotGoalPose()->position.y) << ")\n"
+                         << "Heading: " << static_cast<int>(map.getRobotGoalPose()->heading * 57.2958f) << " deg";
+        }
+        break;
+    case SelectedObjectType::Robot:
+        selectedInfo << "Type: Robot\n"
+                     << "Position: (" << static_cast<int>(m_amr.getPosition().x) << ", "
+                     << static_cast<int>(m_amr.getPosition().y) << ")\n"
+                     << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg";
+        break;
+    case SelectedObjectType::None:
+    default:
+        selectedInfo << "Type: None";
+        break;
+    }
+
+    sf::Text selectedText(m_uiFont, selectedInfo.str(), 16);
+    selectedText.setFillColor(sf::Color(75, 75, 75));
+    selectedText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(selectedText);
+    y += 96.0f;
+
+    sf::Text robotStateTitle(m_uiFont, "Robot State", 19);
+    robotStateTitle.setFillColor(sf::Color(45, 45, 45));
+    robotStateTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(robotStateTitle);
     y += 28.0f;
 
     const sf::Vector2f robotPos = m_amr.getPosition();

@@ -205,6 +205,10 @@ void MapData::removeObstacle(const sf::Vector2f& worldPos) {
     m_obstacles.erase(m_mapper.worldToGrid(worldPos));
 }
 
+void MapData::removeObstacle(const GridCoord& coord) {
+    m_obstacles.erase(coord);
+}
+
 bool MapData::isObstacleAt(const sf::Vector2f& worldPos) const {
     return isObstacleAt(m_mapper.worldToGrid(worldPos));
 }
@@ -235,6 +239,15 @@ void MapData::addWorkZone(const sf::FloatRect& bounds) {
     m_workZones.push_back(WorkZone{bounds});
 }
 
+bool MapData::removeWorkZone(std::size_t index) {
+    if (index >= m_workZones.size()) {
+        return false;
+    }
+
+    m_workZones.erase(m_workZones.begin() + static_cast<std::ptrdiff_t>(index));
+    return true;
+}
+
 const std::vector<WorkZone>& MapData::getWorkZones() const {
     return m_workZones;
 }
@@ -249,6 +262,14 @@ void MapData::setRobotGoalPose(const Pose2D& pose) {
     if (containsWorldPoint(pose.position)) {
         m_robotGoalPose = pose;
     }
+}
+
+void MapData::clearRobotStartPose() {
+    m_robotStartPose.reset();
+}
+
+void MapData::clearRobotGoalPose() {
+    m_robotGoalPose.reset();
 }
 
 const std::optional<Pose2D>& MapData::getRobotStartPose() const {

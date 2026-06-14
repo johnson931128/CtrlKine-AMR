@@ -3,8 +3,28 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+float normalizeAngle(float angleRadians) {
+    constexpr float kPi = 3.14159265f;
+    constexpr float kTwoPi = 6.28318531f;
+
+    while (angleRadians <= -kPi) {
+        angleRadians += kTwoPi;
+    }
+
+    while (angleRadians > kPi) {
+        angleRadians -= kTwoPi;
+    }
+
+    return angleRadians;
+}
+}
+
 Environment::Environment(float gridSize)
-    : m_map(gridSize), m_editorMode(EditorMode::PlaceObstacle), m_isDrawingWorkZone(false) {}
+    : m_map(gridSize),
+      m_editorMode(EditorMode::PlaceObstacle),
+      m_isDrawingWorkZone(false),
+      m_selectedObject(SelectedObject::none()) {}
 
 void Environment::handleLeftMousePressed(const sf::Vector2f& worldPos) {
     switch (m_editorMode) {
@@ -14,13 +34,19 @@ void Environment::handleLeftMousePressed(const sf::Vector2f& worldPos) {
         m_map.addObstacle(worldPos);
         break;
     case EditorMode::DeleteObstacle:
-        m_map.removeObstacle(worldPos);
+        deleteObjectAt(worldPos);
         break;
     case EditorMode::SetStartPose:
-        m_map.setRobotStartPose(Pose2D{worldPos, 0.0f});
+        m_map.setRobotStartPose(Pose2D{
+            worldPos,
+            m_map.getRobotStartPose().has_value() ? m_map.getRobotStartPose()->heading : 0.0f
+        });
         break;
     case EditorMode::SetGoalPose:
-        m_map.setRobotGoalPose(Pose2D{worldPos, 0.0f});
+        m_map.setRobotGoalPose(Pose2D{
+            worldPos,
+            m_map.getRobotGoalPose().has_value() ? m_map.getRobotGoalPose()->heading : 0.0f
+        });
         break;
     case EditorMode::DrawWorkZone:
         if (!m_map.containsWorldPoint(worldPos)) {
@@ -69,12 +95,15 @@ void Environment::setCursorWorldPosition(const std::optional<sf::Vector2f>& worl
     m_cursorWorldPos = worldPos;
 }
 
+void Environment::setSelectedObject(const SelectedObject& selectedObject) {
+    m_selectedObject = selectedObject;
+}
+
 void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
     drawGrid(window, simView);
     drawWorldBoundary(window);
     drawWorkZones(window);
     drawObstacles(window);
-    drawCursorPreview(window);
 
     if (m_map.getRobotStartPose().has_value()) {
         drawPoseMarker(window, *m_map.getRobotStartPose(), sf::Color(60, 179, 113));
@@ -83,6 +112,9 @@ void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
     if (m_map.getRobotGoalPose().has_value()) {
         drawPoseMarker(window, *m_map.getRobotGoalPose(), sf::Color(220, 20, 60));
     }
+
+    drawSelectionHighlight(window);
+    drawCursorPreview(window);
 }
 
 void Environment::drawGrid(sf::RenderWindow& window, const sf::View& simView) {
@@ -175,6 +207,45 @@ void Environment::drawWorkZones(sf::RenderWindow& window) {
     }
 }
 
+void Environment::drawSelectionHighlight(sf::RenderWindow& window) {
+    switch (m_selectedObject.type) {
+    case SelectedObjectType::Obstacle:
+        if (m_selectedObject.obstacleCoord.has_value()) {
+            sf::RectangleShape selectedCell(sf::Vector2f(getGridSize(), getGridSize()));
+            selectedCell.setPosition(m_map.getMapper().gridToWorldTopLeft(*m_selectedObject.obstacleCoord));
+            selectedCell.setFillColor(sf::Color(255, 215, 0, 35));
+            selectedCell.setOutlineThickness(2.0f);
+            selectedCell.setOutlineColor(sf::Color(255, 165, 0));
+            window.draw(selectedCell);
+        }
+        break;
+    case SelectedObjectType::WorkZone:
+        if (m_selectedObject.workZoneIndex.has_value()
+            && *m_selectedObject.workZoneIndex < m_map.getWorkZones().size()) {
+            const WorkZone& zone = m_map.getWorkZones()[*m_selectedObject.workZoneIndex];
+            sf::RectangleShape selectedZone(zone.bounds.size);
+            selectedZone.setPosition(zone.bounds.position);
+            selectedZone.setFillColor(sf::Color(255, 215, 0, 24));
+            selectedZone.setOutlineThickness(2.0f);
+            selectedZone.setOutlineColor(sf::Color(255, 165, 0));
+            window.draw(selectedZone);
+        }
+        break;
+    case SelectedObjectType::StartPose:
+        if (m_map.getRobotStartPose().has_value()) {
+            drawPoseMarker(window, *m_map.getRobotStartPose(), sf::Color(255, 165, 0));
+        }
+        break;
+    case SelectedObjectType::GoalPose:
+        if (m_map.getRobotGoalPose().has_value()) {
+            drawPoseMarker(window, *m_map.getRobotGoalPose(), sf::Color(255, 165, 0));
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void Environment::drawCursorPreview(sf::RenderWindow& window) {
     if (!m_cursorWorldPos.has_value() || !m_map.containsWorldPoint(*m_cursorWorldPos)) {
         return;
@@ -193,7 +264,14 @@ void Environment::drawCursorPreview(sf::RenderWindow& window) {
     }
 
     if (m_editorMode == EditorMode::SetStartPose || m_editorMode == EditorMode::SetGoalPose) {
-        drawPoseMarker(window, Pose2D{*m_cursorWorldPos, 0.0f}, getPreviewColor());
+        float previewHeading = 0.0f;
+        if (m_editorMode == EditorMode::SetStartPose && m_map.getRobotStartPose().has_value()) {
+            previewHeading = m_map.getRobotStartPose()->heading;
+        } else if (m_editorMode == EditorMode::SetGoalPose && m_map.getRobotGoalPose().has_value()) {
+            previewHeading = m_map.getRobotGoalPose()->heading;
+        }
+
+        drawPoseMarker(window, Pose2D{*m_cursorWorldPos, previewHeading}, getPreviewColor());
         return;
     }
 
@@ -207,22 +285,37 @@ void Environment::drawCursorPreview(sf::RenderWindow& window) {
 }
 
 void Environment::drawPoseMarker(sf::RenderWindow& window, const Pose2D& pose, const sf::Color& color) {
+    constexpr float kArrowLength = 20.0f;
+    constexpr float kArrowWingLength = 7.0f;
+    constexpr float kArrowWingOffset = 0.55f;
+
     sf::CircleShape marker(10.0f, 24);
     marker.setOrigin(sf::Vector2f(10.0f, 10.0f));
     marker.setPosition(pose.position);
     marker.setFillColor(color);
     window.draw(marker);
 
-    sf::VertexArray headingLine(sf::PrimitiveType::Lines, 2);
-    headingLine[0] = sf::Vertex{pose.position, color};
-    headingLine[1] = sf::Vertex{
-        sf::Vector2f(
-            pose.position.x + std::cos(pose.heading) * 18.0f,
-            pose.position.y + std::sin(pose.heading) * 18.0f
-        ),
-        color
-    };
-    window.draw(headingLine);
+    const sf::Vector2f arrowTip(
+        pose.position.x + std::cos(pose.heading) * kArrowLength,
+        pose.position.y + std::sin(pose.heading) * kArrowLength
+    );
+    const sf::Vector2f leftWing(
+        arrowTip.x - std::cos(pose.heading - kArrowWingOffset) * kArrowWingLength,
+        arrowTip.y - std::sin(pose.heading - kArrowWingOffset) * kArrowWingLength
+    );
+    const sf::Vector2f rightWing(
+        arrowTip.x - std::cos(pose.heading + kArrowWingOffset) * kArrowWingLength,
+        arrowTip.y - std::sin(pose.heading + kArrowWingOffset) * kArrowWingLength
+    );
+
+    sf::VertexArray arrow(sf::PrimitiveType::Lines, 6);
+    arrow[0] = sf::Vertex{pose.position, color};
+    arrow[1] = sf::Vertex{arrowTip, color};
+    arrow[2] = sf::Vertex{arrowTip, color};
+    arrow[3] = sf::Vertex{leftWing, color};
+    arrow[4] = sf::Vertex{arrowTip, color};
+    arrow[5] = sf::Vertex{rightWing, color};
+    window.draw(arrow);
 }
 
 sf::FloatRect Environment::makeRectFromPoints(const sf::Vector2f& start, const sf::Vector2f& end) const {
@@ -255,16 +348,93 @@ bool Environment::saveMapToFile(const std::string& filename) const {
 
 bool Environment::loadMapFromFile(const std::string& filename) {
     cancelActiveTool();
+    m_selectedObject = SelectedObject::none();
     return m_map.loadFromFile(filename);
 }
 
 void Environment::clearMap() {
     cancelActiveTool();
     m_map.clear();
+    m_selectedObject = SelectedObject::none();
 }
 
 bool Environment::isDrawingWorkZone() const {
     return m_isDrawingWorkZone;
+}
+
+SelectedObject Environment::hitTest(const sf::Vector2f& worldPos) const {
+    if (m_map.getRobotStartPose().has_value() && isPointOnPoseMarker(worldPos, *m_map.getRobotStartPose())) {
+        return SelectedObject::startPose();
+    }
+
+    if (m_map.getRobotGoalPose().has_value() && isPointOnPoseMarker(worldPos, *m_map.getRobotGoalPose())) {
+        return SelectedObject::goalPose();
+    }
+
+    const auto& workZones = m_map.getWorkZones();
+    for (std::size_t i = workZones.size(); i > 0; --i) {
+        if (workZones[i - 1].bounds.contains(worldPos)) {
+            return SelectedObject::workZone(i - 1);
+        }
+    }
+
+    const GridCoord coord = m_map.getMapper().worldToGrid(worldPos);
+    if (m_map.isObstacleAt(coord)) {
+        return SelectedObject::obstacle(coord);
+    }
+
+    return SelectedObject::none();
+}
+
+bool Environment::deleteObjectAt(const sf::Vector2f& worldPos, SelectedObject* deletedObject) {
+    const SelectedObject hitObject = hitTest(worldPos);
+    const bool deleted = deleteSelectedObject(hitObject);
+    if (deleted && deletedObject != nullptr) {
+        *deletedObject = hitObject;
+    }
+    return deleted;
+}
+
+bool Environment::deleteSelectedObject(const SelectedObject& selectedObject) {
+    switch (selectedObject.type) {
+    case SelectedObjectType::Obstacle:
+        if (selectedObject.obstacleCoord.has_value()) {
+            m_map.removeObstacle(*selectedObject.obstacleCoord);
+            return true;
+        }
+        return false;
+    case SelectedObjectType::WorkZone:
+        if (selectedObject.workZoneIndex.has_value()) {
+            return m_map.removeWorkZone(*selectedObject.workZoneIndex);
+        }
+        return false;
+    case SelectedObjectType::StartPose:
+        m_map.clearRobotStartPose();
+        return true;
+    case SelectedObjectType::GoalPose:
+        m_map.clearRobotGoalPose();
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool Environment::rotateSelectedHeading(const SelectedObject& selectedObject, float deltaRadians) {
+    if (selectedObject.type == SelectedObjectType::StartPose && m_map.getRobotStartPose().has_value()) {
+        Pose2D updatedPose = *m_map.getRobotStartPose();
+        updatedPose.heading = normalizeAngle(updatedPose.heading + deltaRadians);
+        m_map.setRobotStartPose(updatedPose);
+        return true;
+    }
+
+    if (selectedObject.type == SelectedObjectType::GoalPose && m_map.getRobotGoalPose().has_value()) {
+        Pose2D updatedPose = *m_map.getRobotGoalPose();
+        updatedPose.heading = normalizeAngle(updatedPose.heading + deltaRadians);
+        m_map.setRobotGoalPose(updatedPose);
+        return true;
+    }
+
+    return false;
 }
 
 bool Environment::shouldDrawGridPreview() const {
@@ -290,4 +460,9 @@ sf::Color Environment::getPreviewColor() const {
     default:
         return sf::Color(80, 80, 80, 180);
     }
+}
+
+bool Environment::isPointOnPoseMarker(const sf::Vector2f& worldPos, const Pose2D& pose) const {
+    const sf::Vector2f delta = worldPos - pose.position;
+    return (delta.x * delta.x) + (delta.y * delta.y) <= 100.0f;
 }
