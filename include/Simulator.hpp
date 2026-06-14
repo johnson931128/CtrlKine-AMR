@@ -24,6 +24,9 @@ private:
     void updateCursorPreview();
     void saveMap();
     void loadMap();
+    void clearMap();
+    void resetView();
+    void resetRobotPose();
     bool handleToolbarClick(const sf::Vector2i& pixelPos);
     void selectObjectAt(const sf::Vector2f& worldPos);
     void clearSelection();
@@ -34,6 +37,7 @@ private:
     sf::RenderWindow m_window;
     sf::View m_uiView;
     sf::View m_simView;
+    sf::View m_defaultSimView;
 
     sf::RectangleShape m_toolbarBg;
     sf::RectangleShape m_inspectorBg;
@@ -50,6 +54,7 @@ private:
     sf::Vector2i m_lastPanPixel;
     std::optional<sf::Vector2f> m_hoverWorldPos;
     sf::FloatRect m_simViewportRect;
+    sf::Vector2f m_defaultRobotPosition;
     std::string m_mapFilename;
     std::string m_statusMessage;
     SelectedObject m_selectedObject;

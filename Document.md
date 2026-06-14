@@ -22,6 +22,12 @@ This document records what the application can do right now and how to operate i
   Use the mouse wheel over the simulation canvas.
 - `Save / Load Map`
   Save the current map to a text file and load it later.
+- `Clear Map`
+  Remove obstacles, work zones, start pose, and goal pose without deleting the robot.
+- `Reset View`
+  Restore the default camera pan and zoom.
+- `Reset Robot Pose`
+  Move the robot back to its default start position and heading.
 
 ## Toolbar
 
@@ -73,6 +79,12 @@ The top toolbar supports both mouse click and keyboard shortcut switching:
   Save the map to `saved_map.txt`
 - `F9`
   Load the map from `saved_map.txt`
+- `Ctrl + N`
+  Clear the map and clear the current selection.
+- `Ctrl + 0`
+  Reset the simulation view to the initial pan and zoom.
+- `Ctrl + R`
+  Reset the robot to its default position and heading.
 
 ## Inspector
 
@@ -88,6 +100,8 @@ The right inspector currently shows:
   Robot position and heading.
 - `Status`
   Recent operation result such as save, load, mode switch, or deletion.
+- `Action Shortcuts`
+  Save / load and reset shortcut reminders.
 
 ## Selected Object Details
 
@@ -143,8 +157,10 @@ This is not an image export. It stores the actual editable map data.
 7. Press `Delete` if you want to remove the selected object.
 8. Press `F5` to save the map.
 9. Press `F9` to load it later.
+10. Press `Ctrl + N` when you want to clear the map quickly.
+11. Press `Ctrl + 0` when you want to restore the default camera view.
+12. Press `Ctrl + R` when you want to move the robot back to its default pose.
 
 ## Remaining TODO
 
-- `Clear Map`
-- `Reset View`
+- No pending item is recorded in this document right now.

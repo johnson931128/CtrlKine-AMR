@@ -16,6 +16,7 @@ constexpr float kToolbarButtonGap = 8.0f;
 constexpr float kToolbarButtonStartX = 16.0f;
 constexpr float kToolbarButtonY = 16.0f;
 constexpr float kHeadingStepRadians = 0.17453292f;
+const sf::Vector2f kDefaultRobotPosition(400.0f, 400.0f);
 
 bool loadUiFont(sf::Font& font) {
     const std::array<const char*, 4> fontPaths = {
@@ -39,17 +40,18 @@ Simulator::Simulator()
     : m_window(sf::VideoMode({kWindowWidth, kWindowHeight}), "AMR Physics Simulator & Environment Editor"),
       m_hasUiFont(false),
       m_amrConfig{100.0f, 60.0f, 30.0f, 10.0f, 70.0f, 80.0f, sf::Color(100, 150, 250), sf::Color(50, 50, 50)},
-      m_amr(m_amrConfig, sf::Vector2f({400.0f, 400.0f})),
+      m_amr(m_amrConfig, kDefaultRobotPosition),
       m_env(50.0f),
       m_isPanning(false),
       m_lastPanPixel({0, 0}),
       m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
+      m_defaultRobotPosition(kDefaultRobotPosition),
       m_mapFilename("saved_map.txt"),
       m_statusMessage("Ready"),
       m_selectedObject(SelectedObject::none()) {
     loadConfig("config.txt");
     m_hasUiFont = loadUiFont(m_uiFont);
-    m_amr = AMR(m_amrConfig, sf::Vector2f({400.0f, 400.0f}));
+    m_amr = AMR(m_amrConfig, m_defaultRobotPosition);
 
     m_uiView = m_window.getDefaultView();
     m_simView = sf::View(
@@ -60,6 +62,7 @@ Simulator::Simulator()
         {m_simViewportRect.position.x / static_cast<float>(kWindowWidth), m_simViewportRect.position.y / static_cast<float>(kWindowHeight)},
         {m_simViewportRect.size.x / static_cast<float>(kWindowWidth), m_simViewportRect.size.y / static_cast<float>(kWindowHeight)}
     ));
+    m_defaultSimView = m_simView;
 
     m_toolbarBg.setSize(sf::Vector2f({static_cast<float>(kWindowWidth), kToolbarHeight}));
     m_toolbarBg.setPosition(sf::Vector2f({0.0f, 0.0f}));
@@ -112,8 +115,46 @@ void Simulator::loadMap() {
     }
 }
 
+void Simulator::clearMap() {
+    m_env.clearMap();
+    clearSelection();
+    m_statusMessage = "Cleared map";
+}
+
+void Simulator::resetView() {
+    m_simView = m_defaultSimView;
+    m_isPanning = false;
+    updateCursorPreview();
+    m_statusMessage = "Reset view";
+}
+
+void Simulator::resetRobotPose() {
+    m_amr = AMR(m_amrConfig, m_defaultRobotPosition);
+    m_statusMessage = "Reset robot pose";
+}
+
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
     if (const auto* keyPressed = event.getIf<sf::Event::KeyPressed>()) {
+        const bool isCtrlPressed =
+            sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)
+            || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+
+        if (isCtrlPressed) {
+            switch (keyPressed->code) {
+            case sf::Keyboard::Key::N:
+                clearMap();
+                return;
+            case sf::Keyboard::Key::Num0:
+                resetView();
+                return;
+            case sf::Keyboard::Key::R:
+                resetRobotPose();
+                return;
+            default:
+                break;
+            }
+        }
+
         switch (keyPressed->code) {
         case sf::Keyboard::Key::Num1:
         case sf::Keyboard::Key::S:
@@ -615,18 +656,22 @@ void Simulator::drawInspector() {
         y += 78.0f;
     }
 
-    sf::Text ioHint(m_uiFont, "F5 Save\nF9 Load", 16);
+    sf::Text ioHint(
+        m_uiFont,
+        "F5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
+        16
+    );
     ioHint.setFillColor(sf::Color(70, 70, 70));
     ioHint.setPosition(sf::Vector2f(panelX, y));
     m_window.draw(ioHint);
 
     sf::Text statusTitle(m_uiFont, "Status", 19);
     statusTitle.setFillColor(sf::Color(45, 45, 45));
-    statusTitle.setPosition(sf::Vector2f(panelX, y + 62.0f));
+    statusTitle.setPosition(sf::Vector2f(panelX, y + 132.0f));
     m_window.draw(statusTitle);
 
     sf::Text statusText(m_uiFont, m_statusMessage, 16);
     statusText.setFillColor(sf::Color(75, 75, 75));
-    statusText.setPosition(sf::Vector2f(panelX, y + 92.0f));
+    statusText.setPosition(sf::Vector2f(panelX, y + 162.0f));
     m_window.draw(statusText);
 }
