@@ -6,6 +6,7 @@
 
 #include "AMR.hpp"
 #include "Environment.hpp"
+#include "MapValidator.hpp"
 #include "SelectedObject.hpp"
 
 class Simulator {
@@ -27,6 +28,7 @@ private:
     void clearMap();
     void resetView();
     void resetRobotPose();
+    void updateValidationResult(bool updateStatusMessage = false);
     bool handleToolbarClick(const sf::Vector2i& pixelPos);
     void selectObjectAt(const sf::Vector2f& worldPos);
     void clearSelection();
@@ -58,4 +60,5 @@ private:
     std::string m_mapFilename;
     std::string m_statusMessage;
     SelectedObject m_selectedObject;
+    ValidationResult m_validationResult;
 };

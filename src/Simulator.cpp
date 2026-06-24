@@ -34,6 +34,30 @@ bool loadUiFont(sf::Font& font) {
 
     return false;
 }
+
+std::string toValidationLabel(ValidationStatus status) {
+    switch (status) {
+    case ValidationStatus::Valid:
+        return "Valid";
+    case ValidationStatus::Warning:
+        return "Warning";
+    case ValidationStatus::Error:
+    default:
+        return "Error";
+    }
+}
+
+sf::Color getValidationColor(ValidationStatus status) {
+    switch (status) {
+    case ValidationStatus::Valid:
+        return sf::Color(46, 139, 87);
+    case ValidationStatus::Warning:
+        return sf::Color(184, 134, 11);
+    case ValidationStatus::Error:
+    default:
+        return sf::Color(178, 34, 34);
+    }
+}
 }
 
 Simulator::Simulator()
@@ -75,6 +99,8 @@ Simulator::Simulator()
     m_divider.setSize(sf::Vector2f({2.0f, static_cast<float>(kWindowHeight)}));
     m_divider.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, 0.0f}));
     m_divider.setFillColor(sf::Color(150, 150, 150));
+
+    updateValidationResult();
 }
 
 void Simulator::loadConfig(const std::string& filename) {
@@ -109,6 +135,7 @@ void Simulator::saveMap() {
 void Simulator::loadMap() {
     if (m_env.loadMapFromFile(m_mapFilename)) {
         clearSelection();
+        updateValidationResult();
         m_statusMessage = "Loaded map from " + m_mapFilename;
     } else {
         m_statusMessage = "Failed to load map";
@@ -118,6 +145,7 @@ void Simulator::loadMap() {
 void Simulator::clearMap() {
     m_env.clearMap();
     clearSelection();
+    updateValidationResult();
     m_statusMessage = "Cleared map";
 }
 
@@ -130,7 +158,16 @@ void Simulator::resetView() {
 
 void Simulator::resetRobotPose() {
     m_amr = AMR(m_amrConfig, m_defaultRobotPosition);
+    updateValidationResult();
     m_statusMessage = "Reset robot pose";
+}
+
+void Simulator::updateValidationResult(bool updateStatusMessage) {
+    m_validationResult = MapValidator::validate(m_env.getMapData(), m_amr);
+
+    if (updateStatusMessage) {
+        m_statusMessage = "Validation: " + toValidationLabel(m_validationResult.status);
+    }
 }
 
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
@@ -194,6 +231,9 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
         case sf::Keyboard::Key::Num7:
         case sf::Keyboard::Key::P:
             m_env.setEditorMode(EditorMode::PanView);
+            break;
+        case sf::Keyboard::Key::V:
+            updateValidationResult(true);
             break;
         case sf::Keyboard::Key::Escape:
             m_env.cancelActiveTool();
@@ -274,6 +314,7 @@ bool Simulator::deleteSelectedObject() {
     const bool deleted = m_env.deleteSelectedObject(m_selectedObject);
     if (deleted) {
         clearSelection();
+        updateValidationResult();
     }
     return deleted;
 }
@@ -370,10 +411,12 @@ void Simulator::processEvents() {
                         } else {
                             syncSelectionToEnvironment();
                         }
+                        updateValidationResult();
                         m_statusMessage = "Deleted object";
                     }
                 } else {
                     m_env.handleLeftMousePressed(worldPos);
+                    updateValidationResult();
                 }
             }
         }
@@ -387,6 +430,7 @@ void Simulator::processEvents() {
                 if (insideSimArea) {
                     const sf::Vector2f worldPos = m_window.mapPixelToCoords(mouseBtn->position, m_simView);
                     m_env.handleLeftMouseReleased(worldPos);
+                    updateValidationResult();
                 }
                 m_isPanning = false;
             }
@@ -420,6 +464,8 @@ void Simulator::update(float dt) {
     const float vR = linearSpeed - turnSpeed;
 
     AMR backupAmr = m_amr;
+    const sf::Vector2f previousPosition = m_amr.getPosition();
+    const float previousHeading = m_amr.getHeading();
     m_amr.update(dt, vL, vR);
 
     const std::vector<sf::Vector2f> corners = m_amr.getCorners();
@@ -434,6 +480,13 @@ void Simulator::update(float dt) {
 
     if (collision) {
         m_amr = backupAmr;
+    }
+
+    const sf::Vector2f currentPosition = m_amr.getPosition();
+    if (currentPosition.x != previousPosition.x
+        || currentPosition.y != previousPosition.y
+        || m_amr.getHeading() != previousHeading) {
+        updateValidationResult();
     }
 }
 
@@ -560,6 +613,30 @@ void Simulator::drawInspector() {
     m_window.draw(mapText);
     y += 120.0f;
 
+    sf::Text validationTitle(m_uiFont, "Map Validation", 19);
+    validationTitle.setFillColor(sf::Color(45, 45, 45));
+    validationTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(validationTitle);
+    y += 28.0f;
+
+    std::ostringstream validationInfo;
+    validationInfo << "Status: " << toValidationLabel(m_validationResult.status);
+    if (m_validationResult.messages.empty()) {
+        validationInfo << "\nMap is ready.";
+    } else {
+        for (const auto& message : m_validationResult.messages) {
+            validationInfo << "\n- " << message;
+        }
+    }
+
+    const std::size_t validationLineCount = 1 + (m_validationResult.messages.empty() ? 1 : m_validationResult.messages.size());
+
+    sf::Text validationText(m_uiFont, validationInfo.str(), 16);
+    validationText.setFillColor(getValidationColor(m_validationResult.status));
+    validationText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(validationText);
+    y += 18.0f + static_cast<float>(validationLineCount) * 22.0f;
+
     sf::Text selectedTitle(m_uiFont, "Selected Object", 19);
     selectedTitle.setFillColor(sf::Color(45, 45, 45));
     selectedTitle.setPosition(sf::Vector2f(panelX, y));
@@ -658,7 +735,7 @@ void Simulator::drawInspector() {
 
     sf::Text ioHint(
         m_uiFont,
-        "F5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
+        "V Validate Map\nF5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
         16
     );
     ioHint.setFillColor(sf::Color(70, 70, 70));

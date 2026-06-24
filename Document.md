@@ -28,6 +28,8 @@ This document records what the application can do right now and how to operate i
   Restore the default camera pan and zoom.
 - `Reset Robot Pose`
   Move the robot back to its default start position and heading.
+- `Map Validation`
+  Check whether the current map is ready for navigation or simulation.
 
 ## Toolbar
 
@@ -85,6 +87,8 @@ The top toolbar supports both mouse click and keyboard shortcut switching:
   Reset the simulation view to the initial pan and zoom.
 - `Ctrl + R`
   Reset the robot to its default position and heading.
+- `V`
+  Run map validation manually and refresh the validation result in Inspector.
 
 ## Inspector
 
@@ -94,6 +98,8 @@ The right inspector currently shows:
   Current world and grid coordinate under the mouse.
 - `Map Stats`
   Grid resolution, obstacle count, work zone count, and whether start / goal are set.
+- `Map Validation`
+  Validation status and validation messages for the current map.
 - `Selected Object`
   Details for the currently selected object.
 - `Robot State`
@@ -129,6 +135,25 @@ Hit test priority is:
 5. `Robot`
 6. `None`
 
+## Map Validation Rules
+
+The current validator checks:
+
+- `Error`
+  - Start pose is not set
+  - Goal pose is not set
+  - Start pose is on an obstacle
+  - Goal pose is on an obstacle
+  - Start pose is outside the world boundary
+  - Goal pose is outside the world boundary
+- `Warning`
+  - Robot is colliding with an obstacle
+  - Start pose and goal pose are in the same grid cell
+  - A work zone is too small or invalid
+  - The map has no obstacles
+- `Valid`
+  - No validation issue is found
+
 ## Save / Load Format
 
 The map is stored as a human-readable text file named `saved_map.txt`.
@@ -160,6 +185,7 @@ This is not an image export. It stores the actual editable map data.
 10. Press `Ctrl + N` when you want to clear the map quickly.
 11. Press `Ctrl + 0` when you want to restore the default camera view.
 12. Press `Ctrl + R` when you want to move the robot back to its default pose.
+13. Press `V` when you want to re-run map validation manually.
 
 ## Remaining TODO
 

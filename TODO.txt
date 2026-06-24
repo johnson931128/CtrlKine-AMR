@@ -4,3 +4,4 @@
 [x] Delete support for work zones / start pose / goal pose
 [x] Start / Goal heading editing
 [x] Clear Map / Reset View / Reset Robot Pose actions
+[x] Map validation inspector and validation shortcut
