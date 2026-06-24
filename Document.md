@@ -30,6 +30,8 @@ This document records what the application can do right now and how to operate i
   Move the robot back to its default start position and heading.
 - `Map Validation`
   Check whether the current map is ready for navigation or simulation.
+- `Path Planning Skeleton`
+  The project now has a PathPlanner module and planning entry point, but the A* core algorithm is still a teaching TODO scaffold.
 
 ## Toolbar
 
@@ -89,6 +91,9 @@ The top toolbar supports both mouse click and keyboard shortcut switching:
   Reset the robot to its default position and heading.
 - `V`
   Run map validation manually and refresh the validation result in Inspector.
+- `Enter`
+  Trigger the current path planning flow.
+  If map validation is `Error`, planning will be blocked.
 
 ## Inspector
 
@@ -100,6 +105,8 @@ The right inspector currently shows:
   Grid resolution, obstacle count, work zone count, and whether start / goal are set.
 - `Map Validation`
   Validation status and validation messages for the current map.
+- `Path Planning`
+  Current planning result, nodes expanded, path length, and planner message.
 - `Selected Object`
   Details for the currently selected object.
 - `Robot State`
@@ -154,6 +161,33 @@ The current validator checks:
 - `Valid`
   - No validation issue is found
 
+## Path Planning Skeleton
+
+The current PathPlanner module is intentionally incomplete.
+
+- `PathPlanner.hpp / PathPlanner.cpp`
+  Already exist and are connected to Simulator.
+- `Enter`
+  Calls the planner when validation is not `Error`.
+- `PathResult`
+  Currently records:
+  - `success`
+  - `path`
+  - `message`
+  - `nodesExpanded`
+  - `pathLength`
+- `A* implementation`
+  Not finished on purpose.
+  The main flow and helper functions contain `TODO(student)` comments for the owner to complete:
+  - `getStartCell()`
+  - `getGoalCell()`
+  - `isCellBlocked()`
+  - `getNeighbors()`
+  - `heuristic()`
+  - `reconstructPath()`
+
+At the moment, the planner returns a teaching placeholder result instead of a real A* path.
+
 ## Save / Load Format
 
 The map is stored as a human-readable text file named `saved_map.txt`.
@@ -186,7 +220,9 @@ This is not an image export. It stores the actual editable map data.
 11. Press `Ctrl + 0` when you want to restore the default camera view.
 12. Press `Ctrl + R` when you want to move the robot back to its default pose.
 13. Press `V` when you want to re-run map validation manually.
+14. Press `Enter` when you want to trigger the current path planning skeleton.
 
 ## Remaining TODO
 
-- No pending item is recorded in this document right now.
+- `A* core implementation inside PathPlanner`
+- `Path rendering on the simulation canvas`

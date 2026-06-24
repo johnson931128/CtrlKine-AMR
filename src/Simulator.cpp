@@ -100,6 +100,7 @@ Simulator::Simulator()
     m_divider.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, 0.0f}));
     m_divider.setFillColor(sf::Color(150, 150, 150));
 
+    m_pathResult.message = "Path planning has not run yet.";
     updateValidationResult();
 }
 
@@ -170,6 +171,18 @@ void Simulator::updateValidationResult(bool updateStatusMessage) {
     }
 }
 
+void Simulator::runPathPlanning() {
+    if (m_validationResult.status == ValidationStatus::Error) {
+        m_pathResult = PathResult{};
+        m_pathResult.message = "Planning blocked: fix map validation errors first.";
+        m_statusMessage = "Planning blocked";
+        return;
+    }
+
+    m_pathResult = PathPlanner::plan(m_env.getMapData());
+    m_statusMessage = m_pathResult.message;
+}
+
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
     if (const auto* keyPressed = event.getIf<sf::Event::KeyPressed>()) {
         const bool isCtrlPressed =
@@ -234,6 +247,9 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
             break;
         case sf::Keyboard::Key::V:
             updateValidationResult(true);
+            break;
+        case sf::Keyboard::Key::Enter:
+            runPathPlanning();
             break;
         case sf::Keyboard::Key::Escape:
             m_env.cancelActiveTool();
@@ -637,6 +653,24 @@ void Simulator::drawInspector() {
     m_window.draw(validationText);
     y += 18.0f + static_cast<float>(validationLineCount) * 22.0f;
 
+    sf::Text planningTitle(m_uiFont, "Path Planning", 19);
+    planningTitle.setFillColor(sf::Color(45, 45, 45));
+    planningTitle.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(planningTitle);
+    y += 28.0f;
+
+    std::ostringstream planningInfo;
+    planningInfo << "Success: " << (m_pathResult.success ? "yes" : "no") << "\n"
+                 << "Nodes: " << m_pathResult.nodesExpanded << "\n"
+                 << "Length: " << static_cast<int>(m_pathResult.pathLength) << "\n"
+                 << "Message: " << m_pathResult.message;
+
+    sf::Text planningText(m_uiFont, planningInfo.str(), 16);
+    planningText.setFillColor(sf::Color(75, 75, 75));
+    planningText.setPosition(sf::Vector2f(panelX, y));
+    m_window.draw(planningText);
+    y += 110.0f;
+
     sf::Text selectedTitle(m_uiFont, "Selected Object", 19);
     selectedTitle.setFillColor(sf::Color(45, 45, 45));
     selectedTitle.setPosition(sf::Vector2f(panelX, y));
@@ -735,7 +769,7 @@ void Simulator::drawInspector() {
 
     sf::Text ioHint(
         m_uiFont,
-        "V Validate Map\nF5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
+        "Enter Plan Path\nV Validate Map\nF5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
         16
     );
     ioHint.setFillColor(sf::Color(70, 70, 70));

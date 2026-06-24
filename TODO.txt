@@ -5,3 +5,4 @@
 [x] Start / Goal heading editing
 [x] Clear Map / Reset View / Reset Robot Pose actions
 [x] Map validation inspector and validation shortcut
+[x] Path planner module skeleton and inspector integration
