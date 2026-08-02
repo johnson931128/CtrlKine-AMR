@@ -14,7 +14,20 @@ OBJS = $(SRCS:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
 
 TARGET = $(BUILD_DIR)/CtrlKine-AMR.exe
 
+TEST_BUILD_DIR = $(BUILD_DIR)/tests
+TEST_MAPPER_TARGET = $(TEST_BUILD_DIR)/CoordinateMapperTests.exe
+TEST_MAP_TARGET = $(TEST_BUILD_DIR)/MapDataTests.exe
+TEST_FILE_TARGET = $(TEST_BUILD_DIR)/MapDataFileTests.exe
+TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET)
+
 all: $(TARGET)
+
+test: $(TEST_TARGETS)
+	@status=0; \
+	$(TEST_MAPPER_TARGET) || status=1; \
+	$(TEST_MAP_TARGET) || status=1; \
+	$(TEST_FILE_TARGET) || status=1; \
+	exit $$status
 
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS) $(LDLIBS)
@@ -22,6 +35,31 @@ $(TARGET): $(OBJS)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_BUILD_DIR)/CoordinateMapperTests.o: tests/CoordinateMapperTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
+$(TEST_BUILD_DIR)/MapDataTests.o: tests/MapDataTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
+$(TEST_BUILD_DIR)/MapDataFileTests.o: tests/MapDataFileTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
+$(TEST_BUILD_DIR)/MapData.o: src/MapData.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(TEST_MAPPER_TARGET): $(TEST_BUILD_DIR)/CoordinateMapperTests.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_MAP_TARGET): $(TEST_BUILD_DIR)/MapDataTests.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_FILE_TARGET): $(TEST_BUILD_DIR)/MapDataFileTests.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 clean:
 	rm -rf $(BUILD_DIR)
