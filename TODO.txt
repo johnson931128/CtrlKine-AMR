@@ -1,8 +1,0 @@
-[x] Save / Load Map using a human-readable text format
-[x] Toolbar mouse click to switch editor mode
-[x] Real Select mode with selected-object inspector
-[x] Delete support for work zones / start pose / goal pose
-[x] Start / Goal heading editing
-[x] Clear Map / Reset View / Reset Robot Pose actions
-[x] Map validation inspector and validation shortcut
-[x] Path planner module skeleton and inspector integration

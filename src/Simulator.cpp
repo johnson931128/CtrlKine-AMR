@@ -1,9 +1,11 @@
 #include "Simulator.hpp"
 
 #include <array>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace {
 constexpr unsigned int kWindowWidth = 1280;
@@ -16,6 +18,10 @@ constexpr float kToolbarButtonGap = 8.0f;
 constexpr float kToolbarButtonStartX = 16.0f;
 constexpr float kToolbarButtonY = 16.0f;
 constexpr float kHeadingStepRadians = 0.17453292f;
+constexpr float kInspectorPadding = 16.0f;
+constexpr float kInspectorSectionGap = 18.0f;
+constexpr float kInspectorTitleGap = 10.0f;
+constexpr float kInspectorScrollStep = 48.0f;
 const sf::Vector2f kDefaultRobotPosition(400.0f, 400.0f);
 
 bool loadUiFont(sf::Font& font) {
@@ -58,6 +64,67 @@ sf::Color getValidationColor(ValidationStatus status) {
         return sf::Color(178, 34, 34);
     }
 }
+
+std::vector<std::string> splitWrappedLine(
+    const std::string& text,
+    const sf::Font& font,
+    unsigned int characterSize,
+    float maxWidth
+) {
+    std::vector<std::string> lines;
+    if (text.empty()) {
+        lines.push_back("");
+        return lines;
+    }
+
+    sf::Text measure(font, "", characterSize);
+    std::istringstream words(text);
+    std::string word;
+    std::string currentLine;
+
+    while (words >> word) {
+        const std::string candidate = currentLine.empty() ? word : currentLine + " " + word;
+        measure.setString(candidate);
+        if (!currentLine.empty() && measure.getLocalBounds().size.x > maxWidth) {
+            lines.push_back(currentLine);
+            currentLine = word;
+            continue;
+        }
+        currentLine = candidate;
+    }
+
+    if (!currentLine.empty()) {
+        lines.push_back(currentLine);
+    }
+
+    if (lines.empty()) {
+        lines.push_back(text);
+    }
+
+    return lines;
+}
+
+std::vector<std::string> wrapTextLines(
+    const std::string& text,
+    const sf::Font& font,
+    unsigned int characterSize,
+    float maxWidth
+) {
+    std::vector<std::string> lines;
+    std::istringstream input(text);
+    std::string rawLine;
+
+    while (std::getline(input, rawLine)) {
+        const std::vector<std::string> wrapped = splitWrappedLine(rawLine, font, characterSize, maxWidth);
+        lines.insert(lines.end(), wrapped.begin(), wrapped.end());
+    }
+
+    if (lines.empty()) {
+        lines.push_back("");
+    }
+
+    return lines;
+}
 }
 
 Simulator::Simulator()
@@ -70,6 +137,8 @@ Simulator::Simulator()
       m_lastPanPixel({0, 0}),
       m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
       m_defaultRobotPosition(kDefaultRobotPosition),
+      m_inspectorScrollOffset(0.0f),
+      m_inspectorContentHeight(0.0f),
       m_mapFilename("saved_map.txt"),
       m_statusMessage("Ready"),
       m_selectedObject(SelectedObject::none()) {
@@ -82,26 +151,59 @@ Simulator::Simulator()
         sf::Vector2f({400.0f, 400.0f}),
         sf::Vector2f({m_simViewportRect.size.x, m_simViewportRect.size.y})
     );
-    m_simView.setViewport(sf::FloatRect(
-        {m_simViewportRect.position.x / static_cast<float>(kWindowWidth), m_simViewportRect.position.y / static_cast<float>(kWindowHeight)},
-        {m_simViewportRect.size.x / static_cast<float>(kWindowWidth), m_simViewportRect.size.y / static_cast<float>(kWindowHeight)}
-    ));
-    m_defaultSimView = m_simView;
-
-    m_toolbarBg.setSize(sf::Vector2f({static_cast<float>(kWindowWidth), kToolbarHeight}));
-    m_toolbarBg.setPosition(sf::Vector2f({0.0f, 0.0f}));
-    m_toolbarBg.setFillColor(sf::Color(236, 236, 236));
-
-    m_inspectorBg.setSize(sf::Vector2f({kInspectorWidth, static_cast<float>(kWindowHeight) - kToolbarHeight}));
-    m_inspectorBg.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, kToolbarHeight}));
-    m_inspectorBg.setFillColor(sf::Color(244, 244, 244));
-
-    m_divider.setSize(sf::Vector2f({2.0f, static_cast<float>(kWindowHeight)}));
-    m_divider.setPosition(sf::Vector2f({kWindowWidth - kInspectorWidth, 0.0f}));
-    m_divider.setFillColor(sf::Color(150, 150, 150));
+    updateWindowLayout();
 
     m_pathResult.message = "Path planning has not run yet.";
     updateValidationResult();
+}
+
+void Simulator::updateWindowLayout() {
+    const sf::Vector2u windowSize = m_window.getSize();
+    const float windowWidth = static_cast<float>(windowSize.x);
+    const float windowHeight = static_cast<float>(windowSize.y);
+
+    const float previousDefaultWidth = m_defaultSimView.getSize().x > 0.0f ? m_defaultSimView.getSize().x : m_simView.getSize().x;
+    const float zoomFactor = previousDefaultWidth > 0.0f ? (m_simView.getSize().x / previousDefaultWidth) : 1.0f;
+    const sf::Vector2f currentCenter = m_simView.getCenter();
+
+    m_uiView = sf::View(
+        sf::Vector2f(windowWidth * 0.5f, windowHeight * 0.5f),
+        sf::Vector2f(windowWidth, windowHeight)
+    );
+
+    m_simViewportRect = sf::FloatRect(
+        sf::Vector2f(0.0f, kToolbarHeight),
+        sf::Vector2f(windowWidth - kInspectorWidth, windowHeight - kToolbarHeight)
+    );
+
+    const sf::Vector2f defaultSimSize(m_simViewportRect.size.x, m_simViewportRect.size.y);
+    m_defaultSimView = sf::View(sf::Vector2f(400.0f, 400.0f), defaultSimSize);
+    m_simView.setCenter(currentCenter);
+    m_simView.setSize(sf::Vector2f(defaultSimSize.x * zoomFactor, defaultSimSize.y * zoomFactor));
+    m_simView.setViewport(sf::FloatRect(
+        {m_simViewportRect.position.x / windowWidth, m_simViewportRect.position.y / windowHeight},
+        {m_simViewportRect.size.x / windowWidth, m_simViewportRect.size.y / windowHeight}
+    ));
+
+    m_toolbarBg.setSize(sf::Vector2f(windowWidth, kToolbarHeight));
+    m_toolbarBg.setPosition(sf::Vector2f(0.0f, 0.0f));
+    m_toolbarBg.setFillColor(sf::Color(236, 236, 236));
+
+    m_inspectorBg.setSize(sf::Vector2f(kInspectorWidth, windowHeight - kToolbarHeight));
+    m_inspectorBg.setPosition(sf::Vector2f(windowWidth - kInspectorWidth, kToolbarHeight));
+    m_inspectorBg.setFillColor(sf::Color(244, 244, 244));
+
+    m_divider.setSize(sf::Vector2f(2.0f, windowHeight));
+    m_divider.setPosition(sf::Vector2f(windowWidth - kInspectorWidth, 0.0f));
+    m_divider.setFillColor(sf::Color(150, 150, 150));
+
+    scrollInspector(0.0f);
+}
+
+void Simulator::scrollInspector(float delta) {
+    const float visibleHeight = m_inspectorBg.getSize().y;
+    const float maxScroll = std::max(0.0f, m_inspectorContentHeight - visibleHeight);
+    m_inspectorScrollOffset = std::clamp(m_inspectorScrollOffset + delta, 0.0f, maxScroll);
 }
 
 void Simulator::loadConfig(const std::string& filename) {
@@ -386,9 +488,22 @@ void Simulator::processEvents() {
             m_window.close();
         }
 
+        if (const auto* resized = event->getIf<sf::Event::Resized>()) {
+            m_window.setView(m_window.getDefaultView());
+            updateWindowLayout();
+            (void)resized;
+        }
+
         if (const auto* scroll = event->getIf<sf::Event::MouseWheelScrolled>()) {
             const sf::Vector2i mousePos = sf::Mouse::getPosition(m_window);
-            if (mousePos.x >= static_cast<int>(m_simViewportRect.position.x)
+            const bool insideInspector = mousePos.x >= static_cast<int>(m_inspectorBg.getPosition().x)
+                && mousePos.x < static_cast<int>(m_inspectorBg.getPosition().x + m_inspectorBg.getSize().x)
+                && mousePos.y >= static_cast<int>(m_inspectorBg.getPosition().y)
+                && mousePos.y < static_cast<int>(m_inspectorBg.getPosition().y + m_inspectorBg.getSize().y);
+
+            if (insideInspector) {
+                scrollInspector(scroll->delta > 0 ? -kInspectorScrollStep : kInspectorScrollStep);
+            } else if (mousePos.x >= static_cast<int>(m_simViewportRect.position.x)
                 && mousePos.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
                 && mousePos.y >= static_cast<int>(m_simViewportRect.position.y)
                 && mousePos.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y)) {
@@ -577,20 +692,50 @@ void Simulator::drawInspector() {
         return;
     }
 
-    const float panelX = static_cast<float>(kWindowWidth) - kInspectorWidth + 16.0f;
-    float y = kToolbarHeight + 18.0f;
+    const sf::Vector2u windowSize = m_window.getSize();
+    const float windowWidth = static_cast<float>(windowSize.x);
+    const float windowHeight = static_cast<float>(windowSize.y);
+    const float contentWidth = kInspectorWidth - (kInspectorPadding * 2.0f);
+
+    sf::View inspectorView(
+        sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f),
+            sf::Vector2f(kInspectorWidth, m_inspectorBg.getSize().y)
+        )
+    );
+    inspectorView.setViewport(sf::FloatRect(
+        {m_inspectorBg.getPosition().x / windowWidth, m_inspectorBg.getPosition().y / windowHeight},
+        {m_inspectorBg.getSize().x / windowWidth, m_inspectorBg.getSize().y / windowHeight}
+    ));
+
+    m_window.setView(inspectorView);
+
+    float y = kInspectorPadding - m_inspectorScrollOffset;
+
+    auto drawSection = [&](const std::string& heading, const std::string& body, const sf::Color& color) {
+        sf::Text headingText(m_uiFont, heading, 19);
+        headingText.setFillColor(sf::Color(45, 45, 45));
+        headingText.setPosition(sf::Vector2f(kInspectorPadding, y));
+        m_window.draw(headingText);
+        y += 28.0f;
+
+        const std::vector<std::string> wrappedLines = wrapTextLines(body, m_uiFont, 16, contentWidth);
+        for (const auto& line : wrappedLines) {
+            sf::Text bodyText(m_uiFont, line, 16);
+            bodyText.setFillColor(color);
+            bodyText.setPosition(sf::Vector2f(kInspectorPadding, y));
+            m_window.draw(bodyText);
+            y += 22.0f;
+        }
+
+        y += kInspectorSectionGap;
+    };
 
     sf::Text title(m_uiFont, "Inspector", 24);
     title.setFillColor(sf::Color(40, 40, 40));
-    title.setPosition(sf::Vector2f(panelX, y));
+    title.setPosition(sf::Vector2f(kInspectorPadding, y));
     m_window.draw(title);
     y += 42.0f;
-
-    sf::Text cursorTitle(m_uiFont, "Cursor", 19);
-    cursorTitle.setFillColor(sf::Color(45, 45, 45));
-    cursorTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(cursorTitle);
-    y += 28.0f;
 
     std::ostringstream cursorInfo;
     if (m_hoverWorldPos.has_value()) {
@@ -601,20 +746,9 @@ void Simulator::drawInspector() {
     } else {
         cursorInfo << "World: -\nGrid: -";
     }
-
-    sf::Text cursorText(m_uiFont, cursorInfo.str(), 16);
-    cursorText.setFillColor(sf::Color(75, 75, 75));
-    cursorText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(cursorText);
-    y += 70.0f;
+    drawSection("Cursor", cursorInfo.str(), sf::Color(75, 75, 75));
 
     const MapData& map = m_env.getMapData();
-
-    sf::Text mapStatsTitle(m_uiFont, "Map Stats", 19);
-    mapStatsTitle.setFillColor(sf::Color(45, 45, 45));
-    mapStatsTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(mapStatsTitle);
-    y += 28.0f;
 
     std::ostringstream mapInfo;
     mapInfo << "Grid: " << static_cast<int>(map.getGridResolution()) << "\n"
@@ -622,18 +756,7 @@ void Simulator::drawInspector() {
             << "Work Zones: " << map.getWorkZones().size() << "\n"
             << "Start Pose: " << (map.getRobotStartPose().has_value() ? "set" : "unset") << "\n"
             << "Goal Pose: " << (map.getRobotGoalPose().has_value() ? "set" : "unset");
-
-    sf::Text mapText(m_uiFont, mapInfo.str(), 16);
-    mapText.setFillColor(sf::Color(75, 75, 75));
-    mapText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(mapText);
-    y += 120.0f;
-
-    sf::Text validationTitle(m_uiFont, "Map Validation", 19);
-    validationTitle.setFillColor(sf::Color(45, 45, 45));
-    validationTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(validationTitle);
-    y += 28.0f;
+    drawSection("Map Stats", mapInfo.str(), sf::Color(75, 75, 75));
 
     std::ostringstream validationInfo;
     validationInfo << "Status: " << toValidationLabel(m_validationResult.status);
@@ -644,38 +767,14 @@ void Simulator::drawInspector() {
             validationInfo << "\n- " << message;
         }
     }
-
-    const std::size_t validationLineCount = 1 + (m_validationResult.messages.empty() ? 1 : m_validationResult.messages.size());
-
-    sf::Text validationText(m_uiFont, validationInfo.str(), 16);
-    validationText.setFillColor(getValidationColor(m_validationResult.status));
-    validationText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(validationText);
-    y += 18.0f + static_cast<float>(validationLineCount) * 22.0f;
-
-    sf::Text planningTitle(m_uiFont, "Path Planning", 19);
-    planningTitle.setFillColor(sf::Color(45, 45, 45));
-    planningTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(planningTitle);
-    y += 28.0f;
+    drawSection("Map Validation", validationInfo.str(), getValidationColor(m_validationResult.status));
 
     std::ostringstream planningInfo;
     planningInfo << "Success: " << (m_pathResult.success ? "yes" : "no") << "\n"
                  << "Nodes: " << m_pathResult.nodesExpanded << "\n"
                  << "Length: " << static_cast<int>(m_pathResult.pathLength) << "\n"
                  << "Message: " << m_pathResult.message;
-
-    sf::Text planningText(m_uiFont, planningInfo.str(), 16);
-    planningText.setFillColor(sf::Color(75, 75, 75));
-    planningText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(planningText);
-    y += 110.0f;
-
-    sf::Text selectedTitle(m_uiFont, "Selected Object", 19);
-    selectedTitle.setFillColor(sf::Color(45, 45, 45));
-    selectedTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(selectedTitle);
-    y += 28.0f;
+    drawSection("Path Planning", planningInfo.str(), sf::Color(75, 75, 75));
 
     std::ostringstream selectedInfo;
     switch (m_selectedObject.type) {
@@ -727,18 +826,7 @@ void Simulator::drawInspector() {
         selectedInfo << "Type: None";
         break;
     }
-
-    sf::Text selectedText(m_uiFont, selectedInfo.str(), 16);
-    selectedText.setFillColor(sf::Color(75, 75, 75));
-    selectedText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(selectedText);
-    y += 96.0f;
-
-    sf::Text robotStateTitle(m_uiFont, "Robot State", 19);
-    robotStateTitle.setFillColor(sf::Color(45, 45, 45));
-    robotStateTitle.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(robotStateTitle);
-    y += 28.0f;
+    drawSection("Selected Object", selectedInfo.str(), sf::Color(75, 75, 75));
 
     const sf::Vector2f robotPos = m_amr.getPosition();
     std::ostringstream robotInfo;
@@ -746,43 +834,20 @@ void Simulator::drawInspector() {
               << static_cast<int>(robotPos.y) << ")\n"
               << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg\n"
               << "Mode: manual";
+    drawSection("Robot State", robotInfo.str(), sf::Color(75, 75, 75));
 
-    sf::Text robotText(m_uiFont, robotInfo.str(), 16);
-    robotText.setFillColor(sf::Color(75, 75, 75));
-    robotText.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(robotText);
-    y += 86.0f;
+    std::ostringstream controlsInfo;
+    controlsInfo << "Enter Plan Path\n"
+                 << "V Validate Map\n"
+                 << "F5 Save\n"
+                 << "F9 Load\n"
+                 << "Ctrl+N Clear Map\n"
+                 << "Ctrl+0 Reset View\n"
+                 << "Ctrl+R Reset Robot";
+    drawSection("Controls", controlsInfo.str(), sf::Color(70, 70, 70));
 
-    if (m_env.getEditorMode() == EditorMode::DrawWorkZone) {
-        sf::Text zoneHint(
-            m_uiFont,
-            m_env.isDrawingWorkZone()
-                ? "Work Zone:\nRelease mouse to create\nEsc to cancel"
-                : "Work Zone:\nPress and drag to create\nEsc to cancel",
-            16
-        );
-        zoneHint.setFillColor(sf::Color(70, 70, 70));
-        zoneHint.setPosition(sf::Vector2f(panelX, y));
-        m_window.draw(zoneHint);
-        y += 78.0f;
-    }
+    m_inspectorContentHeight = std::max(m_inspectorBg.getSize().y, y + m_inspectorScrollOffset);
+    scrollInspector(0.0f);
 
-    sf::Text ioHint(
-        m_uiFont,
-        "Enter Plan Path\nV Validate Map\nF5 Save\nF9 Load\nCtrl+N Clear Map\nCtrl+0 Reset View\nCtrl+R Reset Robot",
-        16
-    );
-    ioHint.setFillColor(sf::Color(70, 70, 70));
-    ioHint.setPosition(sf::Vector2f(panelX, y));
-    m_window.draw(ioHint);
-
-    sf::Text statusTitle(m_uiFont, "Status", 19);
-    statusTitle.setFillColor(sf::Color(45, 45, 45));
-    statusTitle.setPosition(sf::Vector2f(panelX, y + 132.0f));
-    m_window.draw(statusTitle);
-
-    sf::Text statusText(m_uiFont, m_statusMessage, 16);
-    statusText.setFillColor(sf::Color(75, 75, 75));
-    statusText.setPosition(sf::Vector2f(panelX, y + 162.0f));
-    m_window.draw(statusText);
+    m_window.setView(m_uiView);
 }
