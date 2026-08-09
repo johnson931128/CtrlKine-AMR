@@ -2,75 +2,89 @@
 
 ## Current milestone
 
-The first complete path-execution foundation is implemented: successful A*
-results are retained, visualized, and followed from start cell through goal
-cell.
+The first navigation-quality milestone is implemented: runtime planning uses
+conservative AMR body clearance, execution removes redundant collinear stops,
+and automatic heading changes are progressive.
 
 ## Completed behavior
 
-- `PathExecution` owns the current `PathResult`, waypoint index, and compact
-  `NotFollowing` / `Following` / `Completed` execution state.
-- A successful non-empty plan replaces the active path and begins following;
-  a failed, blocked, or empty result cannot begin execution.
-- Replanning resets progress, while map replacement/editing and robot reset
-  clear the active executable path and its visualization.
-- Simulator renders the active path as a cell-center line with waypoint
-  markers, using `CoordinateMapper` without modifying `MapData`.
-- While following, autonomous waypoint movement owns the AMR update. Movement
-  is frame-time based, clamps its final step to prevent overshoot, advances
-  only after collision acceptance, and stops in `Completed` after the final
-  waypoint.
-- Manual AMR controls are unchanged when execution is not following or has
-  completed.
-- Existing first-version `PathPlanner` behavior is unchanged.
+- Start and Goal placement still uses `MapData`'s approved half-open world
+  boundary. The observed placement cutoff was a visualization issue: the grid
+  extended beyond the editable boundary. Grid rendering is now clipped to the
+  world boundary, and outside clicks do not clear the active route.
+- `PathPlanner::plan(const MapData&)` retains its approved point/cell behavior.
+  Simulator uses a separate clearance-aware overload with the current AMR
+  body's conservative enclosing-circle radius.
+- For the configured 120 by 60 body, the runtime clearance radius is
+  `hypot(60, 30)`, approximately 67.08 world units. Candidate centers are
+  rejected when this circle crosses the half-open world boundary or touches an
+  obstacle cell AABB. Start and Goal poses and their cell centers use the same
+  predicate.
+- Inflated occupancy is derived during planning. Persistent obstacles and map
+  files remain unchanged.
+- `PathResult.path` remains the complete raw four-neighbor A* path.
+  `PathExecution` derives a separate execution waypoint sequence by removing
+  only intermediate points whose adjacent raw steps are identical unit-cardinal
+  directions. Start, Goal, corners, and irregular path segments are preserved.
+- Automatic following uses bounded angular change through the differential-
+  drive update. Sharp turns rotate in place before translation; aligned motion
+  remains frame-time based and clamps the final step. Collision rollback still
+  occurs before waypoint advancement. Manual controls are unchanged whenever
+  the path is not following.
 
 ## Ownership decisions
 
-- `PathPlanner` still owns only A* planning and returns `PathResult`.
-- Simulator owns `PathExecution` and coordinates planning, movement, and the
-  transient path overlay.
-- `AMR` owns robot pose/movement and exposes only a world-space `moveToward`
-  primitive; it does not know `PathPlanner`, `PathResult`, or grid conversion.
-- `Environment` and `MapData` do not own or mutate executable path state.
+- `PathPlanner` owns A* and the single clearance-aware traversability predicate;
+  it receives a world-unit radius and does not depend on AMR or rendering.
+- `AMR` owns its geometry and exposes the conservative body radius plus the
+  progressive world-target movement primitive.
+- `PathExecution` owns derived transient execution waypoints while retaining
+  the authoritative raw `PathResult`.
+- Simulator coordinates geometry, planning, execution, rendering, input, and
+  collision acceptance. `MapData` remains the authoritative persistent map.
 
 ## Verification
 
 - Clean `mingw32-make all` passed on 2026-08-09.
-- `mingw32-make test` passed all five suites: 54 PASS, 0 FAIL.
+- Clean `mingw32-make test` passed all five suites: 70 PASS, 0 FAIL.
 - `CoordinateMapperTests.exe`: 6 PASS, 0 FAIL.
-- `MapDataTests.exe`: 15 PASS, 0 FAIL.
+- `MapDataTests.exe`: 16 PASS, 0 FAIL.
 - `MapDataFileTests.exe`: 15 PASS, 0 FAIL.
-- `PathPlannerTests.exe`: 7 PASS, 0 FAIL.
-- `PathExecutionTests.exe`: 11 PASS, 0 FAIL.
+- `PathPlannerTests.exe`: 14 PASS, 0 FAIL.
+- `PathExecutionTests.exe`: 19 PASS, 0 FAIL.
 - Each test executable was also run directly and passed.
-- GUI runtime capture was unavailable in the current automation session: the
-  process launched but exposed no accessible Windows window handle, so path
-  visibility and end-to-end in-app motion were not claimed as visually
+- The desktop executable launched and created an SFML window. The available UI
+  automation could not reliably enumerate or attach to that window, so
+  placement, clearance, motion, and replanning are not claimed as visually
   verified.
 
 ## Known limitations
 
-- The map start pose and current AMR pose are independent. The AMR first moves
-  toward the start-cell waypoint; that approach segment is not planned.
-- A* remains cell-center/point based without footprint inflation. Runtime AMR
-  collision checks can therefore stall on a planner-valid path near an
-  obstacle; automatic replanning is not implemented.
-- Waypoint following is constant-speed first-version motion. It has no
-  acceleration profile, smoothing, or heading-aware trajectory planning.
-- The Makefile still does not track header dependencies, so header changes
-  require a clean rebuild.
+- The enclosing-circle footprint is deliberately conservative and can reject a
+  passage that the rectangular body could traverse at a particular heading.
+  Wheels are not included because current runtime collision semantics use the
+  body only.
+- Only collinear execution points are compressed. There is no line-of-sight
+  shortcutting, spline generation, or curvature optimization.
+- Automatic motion is deterministic stop-turn-go control, not a continuous-
+  curvature trajectory. Goal-pose heading is not executed.
+- The current AMR pose still approaches the first Start-cell waypoint without a
+  planned approach segment.
+- Runtime collision acceptance samples the body's current corners and has no
+  swept-volume test, so very large frame times can still tunnel.
+- The Makefile does not track header dependencies; header changes require a
+  clean rebuild.
 
 ## Next smallest step
 
-Perform an interactive desktop acceptance pass for visible path replacement,
-successful completion, and blocked planning. Choose any further navigation
-behavior only as a separate approved milestone.
+Perform an interactive desktop acceptance pass covering boundary visualization,
+wall/corner clearance, narrow-passage rejection, progressive turning, route
+completion, and replanning. Address only a reproduced failure from that pass.
 
 ## Important decisions
 
-- The retained planner result is the single authoritative grid path used by
-  both execution and visualization; render vertices are only a derived cache.
-- Failed planning replaces prior execution state instead of leaving a stale
-  route executable.
-- Collision rollback occurs before waypoint advancement, so rejected motion
-  cannot consume a waypoint.
+- The approved one-argument planner API remains unchanged; footprint-aware
+  planning is an explicit overload used by Simulator.
+- Obstacle inflation is never persisted. The physical map remains authoritative.
+- Collinear simplification is execution-only because it preserves the exact raw
+  path geometry without introducing a second safety predicate.

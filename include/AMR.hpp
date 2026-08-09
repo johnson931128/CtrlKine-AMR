@@ -21,10 +21,18 @@ public:
 
     void update(float dt, float vL, float vR);
     bool moveToward(const sf::Vector2f& target, float dt, float maxSpeed, float arrivalTolerance = 0.5f);
+    bool moveToward(
+        const sf::Vector2f& target,
+        float dt,
+        float maxSpeed,
+        float maxAngularSpeed,
+        float arrivalTolerance
+    );
     void draw(sf::RenderWindow& window);
 
     sf::Vector2f getPosition() const { return m_position; }
     float getHeading() const { return m_heading; }
+    float getConservativeBodyRadius() const;
     std::vector<sf::Vector2f> getCorners() const;
     bool containsPoint(const sf::Vector2f& worldPos) const;
 

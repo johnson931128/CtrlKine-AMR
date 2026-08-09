@@ -92,6 +92,31 @@ int main() {
         map.clearRobotGoalPose();
         return stored && !map.getRobotGoalPose().has_value();
     });
+    runTest(suite, "MAP-007/MAP-008", "start and goal share half-open placement bounds", [] {
+        MapData boundaryMap(10.0f);
+        boundaryMap.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(-10.0f, -20.0f),
+            sf::Vector2f(30.0f, 40.0f)
+        ));
+
+        boundaryMap.setRobotStartPose(Pose2D{sf::Vector2f(-10.0f, -20.0f), 0.5f});
+        boundaryMap.setRobotGoalPose(Pose2D{sf::Vector2f(-10.0f, -20.0f), 1.0f});
+        if (!boundaryMap.getRobotStartPose().has_value()
+            || !boundaryMap.getRobotGoalPose().has_value()) {
+            return false;
+        }
+
+        boundaryMap.setRobotStartPose(Pose2D{sf::Vector2f(20.0f, 0.0f), 2.0f});
+        boundaryMap.setRobotGoalPose(Pose2D{sf::Vector2f(0.0f, 20.0f), 2.5f});
+        return samePoint(
+                   boundaryMap.getRobotStartPose()->position,
+                   sf::Vector2f(-10.0f, -20.0f)
+               )
+            && samePoint(
+                   boundaryMap.getRobotGoalPose()->position,
+                   sf::Vector2f(-10.0f, -20.0f)
+               );
+    });
     runTest(suite, "MAP-009", "valid and invalid work zones", [&] {
         map.clear();
         map.addWorkZone(sf::FloatRect(sf::Vector2f(10.0f, 10.0f), sf::Vector2f(20.0f, 30.0f)));

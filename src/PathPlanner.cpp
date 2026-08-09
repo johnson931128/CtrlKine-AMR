@@ -5,6 +5,20 @@
 #include <set>
 
 PathResult PathPlanner::plan(const MapData& mapData) {
+    return planWithClearance(mapData, 0.0f);
+}
+
+PathResult PathPlanner::plan(const MapData& mapData, float clearanceRadius) {
+    if (!std::isfinite(clearanceRadius) || clearanceRadius < 0.0f) {
+        PathResult result;
+        result.message = "Planning failed: clearance radius is invalid.";
+        return result;
+    }
+
+    return planWithClearance(mapData, clearanceRadius);
+}
+
+PathResult PathPlanner::planWithClearance(const MapData& mapData, float clearanceRadius) {
     PathResult result;
 
     const std::optional<GridCoord> startCell = getStartCell(mapData);
@@ -19,12 +33,16 @@ PathResult PathPlanner::plan(const MapData& mapData) {
         return result;
     }
 
-    if (isCellBlocked(mapData, *startCell)) {
+    const bool startPoseBlocked = clearanceRadius > 0.0f
+        && isPositionBlocked(mapData, mapData.getRobotStartPose()->position, clearanceRadius);
+    if (startPoseBlocked || isCellBlocked(mapData, *startCell, clearanceRadius)) {
         result.message = "Planning failed: start cell is blocked.";
         return result;
     }
 
-    if (isCellBlocked(mapData, *goalCell)) {
+    const bool goalPoseBlocked = clearanceRadius > 0.0f
+        && isPositionBlocked(mapData, mapData.getRobotGoalPose()->position, clearanceRadius);
+    if (goalPoseBlocked || isCellBlocked(mapData, *goalCell, clearanceRadius)) {
         result.message = "Planning failed: goal cell is blocked.";
         return result;
     }
@@ -59,7 +77,7 @@ PathResult PathPlanner::plan(const MapData& mapData) {
         }
 
         const float tentativeBaseGScore = gScore.at(current) + 1.0f;
-        for (const GridCoord& neighbor : getNeighbors(mapData, current)) {
+        for (const GridCoord& neighbor : getNeighbors(mapData, current, clearanceRadius)) {
             const auto knownGScore = gScore.find(neighbor);
             if (knownGScore != gScore.end() && tentativeBaseGScore >= knownGScore->second) {
                 continue;
@@ -104,20 +122,57 @@ std::optional<GridCoord> PathPlanner::getGoalCell(const MapData& mapData) {
     return mapData.getMapper().worldToGrid(mapData.getRobotGoalPose()->position);
 }
 
-bool PathPlanner::isCellBlocked(const MapData& mapData, const GridCoord& cell) {
-    // TODO(student):
-    // 1. 判斷 cell 是否落在世界邊界外。
-    // 2. 判斷 cell 是否被 obstacle 佔用。
-    // 3. 之後若要加入 footprint / forbidden zone，也可以在這裡擴充。
-    const sf::Vector2f cellCenter = mapData.getMapper().gridToWorldCenter(cell);
-    if (!mapData.containsWorldPoint(cellCenter)) {
+bool PathPlanner::isPositionBlocked(
+    const MapData& mapData,
+    const sf::Vector2f& position,
+    float clearanceRadius
+) {
+    if (clearanceRadius == 0.0f) {
+        return !mapData.containsWorldPoint(position) || mapData.isObstacleAt(position);
+    }
+
+    const sf::FloatRect& boundary = mapData.getWorldBoundary();
+    const float right = boundary.position.x + boundary.size.x;
+    const float bottom = boundary.position.y + boundary.size.y;
+    if (position.x - clearanceRadius < boundary.position.x
+        || position.y - clearanceRadius < boundary.position.y
+        || position.x + clearanceRadius >= right
+        || position.y + clearanceRadius >= bottom) {
         return true;
     }
 
-    return mapData.isObstacleAt(cell);
+    const float radiusSquared = clearanceRadius * clearanceRadius;
+    const float gridSize = mapData.getGridResolution();
+    for (const GridCoord& obstacle : mapData.getObstacles()) {
+        const sf::Vector2f topLeft = mapData.getMapper().gridToWorldTopLeft(obstacle);
+        const float closestX = std::clamp(position.x, topLeft.x, topLeft.x + gridSize);
+        const float closestY = std::clamp(position.y, topLeft.y, topLeft.y + gridSize);
+        const float dx = position.x - closestX;
+        const float dy = position.y - closestY;
+        if ((dx * dx) + (dy * dy) <= radiusSquared) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-std::vector<GridCoord> PathPlanner::getNeighbors(const MapData& mapData, const GridCoord& cell) {
+bool PathPlanner::isCellBlocked(
+    const MapData& mapData,
+    const GridCoord& cell,
+    float clearanceRadius
+) {
+    // Planning is center-based, so cells and endpoint poses share the same
+    // world-space clearance predicate.
+    const sf::Vector2f cellCenter = mapData.getMapper().gridToWorldCenter(cell);
+    return isPositionBlocked(mapData, cellCenter, clearanceRadius);
+}
+
+std::vector<GridCoord> PathPlanner::getNeighbors(
+    const MapData& mapData,
+    const GridCoord& cell,
+    float clearanceRadius
+) {
     // TODO(student):
     // 1. 先決定要用 4-neighbor 還是 8-neighbor。
     // 2. 產生 candidate cells。
@@ -132,7 +187,7 @@ std::vector<GridCoord> PathPlanner::getNeighbors(const MapData& mapData, const G
 
     std::vector<GridCoord> neighbors;
     for (const auto& candidate : candidateCells) {
-        if (!isCellBlocked(mapData, candidate)) {
+        if (!isCellBlocked(mapData, candidate, clearanceRadius)) {
             neighbors.push_back(candidate);
         }
     }

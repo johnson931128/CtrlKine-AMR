@@ -304,7 +304,7 @@ void Simulator::runPathPlanning() {
         return;
     }
 
-    result = PathPlanner::plan(m_env.getMapData());
+    result = PathPlanner::plan(m_env.getMapData(), m_amr.getConservativeBodyRadius());
     m_pathExecution.install(std::move(result));
     rebuildPathVisualization();
     m_statusMessage = m_pathExecution.getResult().message;
@@ -590,6 +590,9 @@ void Simulator::processEvents() {
                         m_statusMessage = "Deleted object";
                     }
                 } else {
+                    if (!m_env.isInsideWorldBounds(worldPos)) {
+                        continue;
+                    }
                     clearPathExecution();
                     m_env.handleLeftMousePressed(worldPos);
                     updateValidationResult();
@@ -628,6 +631,9 @@ void Simulator::processEvents() {
 void Simulator::update(float dt) {
     const float maxSpeed = 150.0f;
     const float turnRate = 100.0f;
+    const float maxAutomaticAngularSpeed = m_amrConfig.trackWidth > 0.0f
+        ? (2.0f * turnRate) / m_amrConfig.trackWidth
+        : 0.0f;
 
     AMR backupAmr = m_amr;
     const sf::Vector2f previousPosition = m_amr.getPosition();
@@ -639,7 +645,13 @@ void Simulator::update(float dt) {
         const std::optional<GridCoord> waypoint = m_pathExecution.getCurrentWaypoint();
         if (waypoint.has_value()) {
             const sf::Vector2f target = m_env.getMapData().getMapper().gridToWorldCenter(*waypoint);
-            reachedWaypoint = m_amr.moveToward(target, dt, maxSpeed);
+            reachedWaypoint = m_amr.moveToward(
+                target,
+                dt,
+                maxSpeed,
+                maxAutomaticAngularSpeed,
+                0.5f
+            );
         }
     } else {
         float linearSpeed = 0.0f;
@@ -721,7 +733,7 @@ void Simulator::drawActivePath() {
     waypointMarker.setFillColor(kPathColor);
 
     const CoordinateMapper& mapper = m_env.getMapData().getMapper();
-    for (const GridCoord& cell : m_pathExecution.getResult().path) {
+    for (const GridCoord& cell : m_pathExecution.getExecutionWaypoints()) {
         waypointMarker.setPosition(mapper.gridToWorldCenter(cell));
         m_window.draw(waypointMarker);
     }
@@ -856,7 +868,8 @@ void Simulator::drawInspector() {
     planningInfo << "Success: " << (pathResult.success ? "yes" : "no") << "\n"
                  << "Nodes: " << pathResult.nodesExpanded << "\n"
                  << "Length: " << static_cast<int>(pathResult.pathLength) << "\n"
-                 << "Waypoints: " << pathResult.path.size() << "\n"
+                 << "Grid cells: " << pathResult.path.size() << "\n"
+                 << "Waypoints: " << m_pathExecution.getExecutionWaypoints().size() << "\n"
                  << "Execution: " << toPathExecutionLabel(m_pathExecution.getState()) << "\n"
                  << "Message: " << pathResult.message;
     drawSection("Path Planning", planningInfo.str(), sf::Color(75, 75, 75));

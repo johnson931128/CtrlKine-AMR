@@ -2,6 +2,21 @@
 
 #include <algorithm>
 
+namespace {
+float normalizeAngle(float angleRadians) {
+    constexpr float kPi = 3.14159265f;
+    constexpr float kTwoPi = 6.28318531f;
+
+    while (angleRadians <= -kPi) {
+        angleRadians += kTwoPi;
+    }
+    while (angleRadians > kPi) {
+        angleRadians -= kTwoPi;
+    }
+    return angleRadians;
+}
+}
+
 AMR::AMR(const AMRConfig& config, sf::Vector2f startPos)
     : m_config(config), m_position(startPos), m_heading(0.0f) {
     m_bodyShape.setSize(sf::Vector2f(m_config.bodyLength, m_config.bodyWidth));
@@ -66,6 +81,63 @@ bool AMR::moveToward(const sf::Vector2f& target, float dt, float maxSpeed, float
     return reached;
 }
 
+bool AMR::moveToward(
+    const sf::Vector2f& target,
+    float dt,
+    float maxSpeed,
+    float maxAngularSpeed,
+    float arrivalTolerance
+) {
+    if (!std::isfinite(target.x) || !std::isfinite(target.y)
+        || !std::isfinite(m_position.x) || !std::isfinite(m_position.y)
+        || !std::isfinite(arrivalTolerance)) {
+        return false;
+    }
+
+    const sf::Vector2f delta = target - m_position;
+    const float distance = std::hypot(delta.x, delta.y);
+    const float safeTolerance = std::max(0.0f, arrivalTolerance);
+    if (distance <= safeTolerance) {
+        m_position = target;
+        syncShapes();
+        return true;
+    }
+
+    if (!std::isfinite(dt) || !std::isfinite(maxSpeed) || !std::isfinite(maxAngularSpeed)
+        || dt <= 0.0f || maxSpeed <= 0.0f || maxAngularSpeed <= 0.0f
+        || m_config.trackWidth <= 0.0f) {
+        return false;
+    }
+
+    const float targetHeading = std::atan2(delta.y, delta.x);
+    const float headingError = normalizeAngle(targetHeading - m_heading);
+    const float maxHeadingStep = maxAngularSpeed * dt;
+
+    if (std::abs(headingError) > maxHeadingStep) {
+        const float omega = std::copysign(maxAngularSpeed, headingError);
+        const float halfWheelDifference = omega * m_config.trackWidth * 0.5f;
+        update(dt, halfWheelDifference, -halfWheelDifference);
+        return false;
+    }
+
+    const float step = std::min(maxSpeed * dt, distance);
+    const float linearSpeed = step / dt;
+    const float omega = headingError / dt;
+    const float halfWheelDifference = omega * m_config.trackWidth * 0.5f;
+    update(
+        dt,
+        linearSpeed + halfWheelDifference,
+        linearSpeed - halfWheelDifference
+    );
+
+    const bool reached = distance - step <= safeTolerance;
+    if (reached) {
+        m_position = target;
+        syncShapes();
+    }
+    return reached;
+}
+
 void AMR::syncShapes() {
     m_bodyShape.setPosition(m_position);
     m_bodyShape.setRotation(sf::radians(m_heading));
@@ -85,6 +157,10 @@ void AMR::syncShapes() {
         m_wheels[i].setPosition(m_position + sf::Vector2f(rx, ry));
         m_wheels[i].setRotation(sf::radians(m_heading));
     }
+}
+
+float AMR::getConservativeBodyRadius() const {
+    return std::hypot(m_config.bodyLength * 0.5f, m_config.bodyWidth * 0.5f);
 }
 
 std::vector<sf::Vector2f> AMR::getCorners() const {

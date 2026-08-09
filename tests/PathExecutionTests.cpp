@@ -2,6 +2,7 @@
 #include "PathExecution.hpp"
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "TestSupport.hpp"
@@ -141,6 +142,52 @@ int main() {
             && !execution.getCurrentWaypoint().has_value();
     });
 
+    runTest(suite, "EXEC-008", "collinear cells become endpoint execution waypoints", [] {
+        const std::vector<GridCoord> rawPath = {
+            GridCoord{0, 0},
+            GridCoord{1, 0},
+            GridCoord{2, 0},
+            GridCoord{3, 0}
+        };
+        PathExecution execution;
+        execution.install(successfulResult(rawPath));
+        const std::vector<GridCoord> expectedWaypoints = {
+            GridCoord{0, 0},
+            GridCoord{3, 0}
+        };
+        return execution.getResult().path == rawPath
+            && execution.getExecutionWaypoints() == expectedWaypoints;
+    });
+
+    runTest(suite, "EXEC-009", "required corners remain execution waypoints", [] {
+        PathExecution execution;
+        execution.install(successfulResult({
+            GridCoord{0, 0},
+            GridCoord{1, 0},
+            GridCoord{2, 0},
+            GridCoord{2, 1},
+            GridCoord{2, 2}
+        }));
+        const std::vector<GridCoord> expectedWaypoints = {
+            GridCoord{0, 0},
+            GridCoord{2, 0},
+            GridCoord{2, 2}
+        };
+        return execution.getExecutionWaypoints() == expectedWaypoints;
+    });
+
+    runTest(suite, "EXEC-010", "direction changes and invalid gaps are not simplified", [] {
+        const std::vector<GridCoord> rawPath = {
+            GridCoord{0, 0},
+            GridCoord{1, 0},
+            GridCoord{0, 0},
+            GridCoord{2, 0}
+        };
+        PathExecution execution;
+        execution.install(successfulResult(rawPath));
+        return execution.getExecutionWaypoints() == rawPath;
+    });
+
     runTest(suite, "MOVE-001", "moveToward clamps travel and does not overshoot", [] {
         AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
         const bool reached = robot.moveToward(sf::Vector2f(5.0f, 0.0f), 1.0f, 10.0f);
@@ -171,6 +218,66 @@ int main() {
         robot.moveToward(sf::Vector2f(0.0f, 10.0f), 0.5f, 10.0f);
         return samePoint(robot.getPosition(), 0.0f, 5.0f)
             && near(robot.getHeading(), 1.57079633f);
+    });
+
+    runTest(suite, "MOVE-005", "automatic heading change is bounded per update", [] {
+        AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
+        const bool reached = robot.moveToward(
+            sf::Vector2f(0.0f, 10.0f),
+            0.1f,
+            10.0f,
+            1.0f,
+            0.5f
+        );
+        return !reached
+            && samePoint(robot.getPosition(), 0.0f, 0.0f)
+            && near(robot.getHeading(), 0.1f);
+    });
+
+    runTest(suite, "MOVE-006", "sharp automatic turn does not snap heading", [] {
+        AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
+        robot.moveToward(sf::Vector2f(0.0f, 10.0f), 0.25f, 10.0f, 1.0f, 0.5f);
+        return robot.getHeading() > 0.0f
+            && robot.getHeading() < 1.57079633f
+            && samePoint(robot.getPosition(), 0.0f, 0.0f);
+    });
+
+    runTest(suite, "MOVE-007", "aligned automatic motion progresses and completes", [] {
+        AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
+        PathExecution execution;
+        execution.install(successfulResult({GridCoord{0, 0}}));
+        const bool reached = robot.moveToward(
+            sf::Vector2f(5.0f, 0.0f),
+            1.0f,
+            10.0f,
+            1.0f,
+            0.5f
+        );
+        if (reached) {
+            execution.advanceWaypoint();
+        }
+        return reached
+            && samePoint(robot.getPosition(), 5.0f, 0.0f)
+            && execution.getState() == PathExecutionState::Completed;
+    });
+
+    runTest(suite, "MOVE-008", "invalid automatic update inputs leave pose unchanged", [] {
+        AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
+        const float infinity = std::numeric_limits<float>::infinity();
+        const bool zeroDt = robot.moveToward(
+            sf::Vector2f(10.0f, 0.0f), 0.0f, 10.0f, 1.0f, 0.5f
+        );
+        const bool invalidRate = robot.moveToward(
+            sf::Vector2f(10.0f, 0.0f), 0.1f, 10.0f, infinity, 0.5f
+        );
+        return !zeroDt && !invalidRate
+            && samePoint(robot.getPosition(), 0.0f, 0.0f)
+            && near(robot.getHeading(), 0.0f);
+    });
+
+    runTest(suite, "MOVE-009", "body clearance radius encloses every heading", [] {
+        AMR robot(testConfig(), sf::Vector2f(0.0f, 0.0f));
+        return near(robot.getConservativeBodyRadius(), std::hypot(5.0f, 10.0f));
     });
 
     return suite.exitCode();

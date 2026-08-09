@@ -122,15 +122,26 @@ void Environment::drawGrid(sf::RenderWindow& window, const sf::View& simView) {
     const sf::Vector2f size = simView.getSize();
     const float gridSize = getGridSize();
 
-    const float left = center.x - size.x / 2.0f;
-    const float right = center.x + size.x / 2.0f;
-    const float top = center.y - size.y / 2.0f;
-    const float bottom = center.y + size.y / 2.0f;
+    const sf::FloatRect& boundary = m_map.getWorldBoundary();
+    const float left = std::max(center.x - size.x / 2.0f, boundary.position.x);
+    const float right = std::min(
+        center.x + size.x / 2.0f,
+        boundary.position.x + boundary.size.x
+    );
+    const float top = std::max(center.y - size.y / 2.0f, boundary.position.y);
+    const float bottom = std::min(
+        center.y + size.y / 2.0f,
+        boundary.position.y + boundary.size.y
+    );
 
-    const int startCol = static_cast<int>(std::floor(left / gridSize));
-    const int endCol = static_cast<int>(std::ceil(right / gridSize));
-    const int startRow = static_cast<int>(std::floor(top / gridSize));
-    const int endRow = static_cast<int>(std::ceil(bottom / gridSize));
+    if (left >= right || top >= bottom) {
+        return;
+    }
+
+    const int startCol = static_cast<int>(std::ceil(left / gridSize));
+    const int endCol = static_cast<int>(std::floor(right / gridSize));
+    const int startRow = static_cast<int>(std::ceil(top / gridSize));
+    const int endRow = static_cast<int>(std::floor(bottom / gridSize));
 
     sf::VertexArray lines(sf::PrimitiveType::Lines);
     const sf::Color gridColor(210, 210, 210);

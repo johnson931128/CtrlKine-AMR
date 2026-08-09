@@ -1,6 +1,7 @@
 #include "PathPlanner.hpp"
 
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include "TestSupport.hpp"
@@ -132,6 +133,70 @@ int main() {
         const PathResult result = PathPlanner::plan(map);
         return isExplicitFailure(result, "no traversable path", false)
             && result.nodesExpanded > 0;
+    });
+
+    runTest(suite, "CLEAR-001", "adjacent obstacle blocks an unsafe start center", [] {
+        MapData map = makeMap(7, 7);
+        setEndpoints(map, GridCoord{2, 3}, GridCoord{5, 3});
+        map.addObstacle(GridCoord{3, 3});
+        return isExplicitFailure(PathPlanner::plan(map, 6.0f), "start cell", true);
+    });
+
+    runTest(suite, "CLEAR-002", "wide opening remains traversable", [] {
+        MapData map = makeMap(9, 7);
+        setEndpoints(map, GridCoord{2, 3}, GridCoord{6, 3});
+        for (int row : {0, 1, 5, 6}) {
+            map.addObstacle(GridCoord{4, row});
+        }
+        const PathResult result = PathPlanner::plan(map, 6.0f);
+        return isValidPath(result, GridCoord{2, 3}, GridCoord{6, 3}, map);
+    });
+
+    runTest(suite, "CLEAR-003", "narrow opening is rejected", [] {
+        MapData map = makeMap(9, 7);
+        setEndpoints(map, GridCoord{2, 3}, GridCoord{6, 3});
+        for (int row : {0, 1, 2, 4, 5, 6}) {
+            map.addObstacle(GridCoord{4, row});
+        }
+        const PathResult result = PathPlanner::plan(map, 6.0f);
+        return isExplicitFailure(result, "no traversable path", false)
+            && result.nodesExpanded > 0;
+    });
+
+    runTest(suite, "CLEAR-004", "goal footprint collision fails before search", [] {
+        MapData map = makeMap(7, 7);
+        setEndpoints(map, GridCoord{1, 3}, GridCoord{4, 3});
+        map.addObstacle(GridCoord{3, 3});
+        return isExplicitFailure(PathPlanner::plan(map, 6.0f), "goal cell", true);
+    });
+
+    runTest(suite, "CLEAR-004", "endpoint pose clearance is checked before its cell center", [] {
+        MapData map = makeMap(7, 7);
+        map.setRobotStartPose(Pose2D{sf::Vector2f(29.0f, 35.0f), 0.0f});
+        map.setRobotGoalPose(Pose2D{
+            map.getMapper().gridToWorldCenter(GridCoord{5, 3}),
+            0.0f
+        });
+        map.addObstacle(GridCoord{3, 3});
+        return isExplicitFailure(PathPlanner::plan(map, 4.0f), "start cell", true);
+    });
+
+    runTest(suite, "CLEAR-005", "world boundary is eroded by body clearance", [] {
+        MapData map = makeMap(7, 7);
+        setEndpoints(map, GridCoord{0, 3}, GridCoord{5, 3});
+        return isExplicitFailure(PathPlanner::plan(map, 6.0f), "start cell", true);
+    });
+
+    runTest(suite, "CLEAR-006", "invalid clearance fails explicitly", [] {
+        MapData map = makeMap(7, 7);
+        setEndpoints(map, GridCoord{1, 3}, GridCoord{5, 3});
+        const PathResult negative = PathPlanner::plan(map, -1.0f);
+        const PathResult nonFinite = PathPlanner::plan(
+            map,
+            std::numeric_limits<float>::infinity()
+        );
+        return isExplicitFailure(negative, "clearance", true)
+            && isExplicitFailure(nonFinite, "clearance", true);
     });
 
     return suite.exitCode();

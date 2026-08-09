@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <vector>
 
 #include "PathPlanner.hpp"
 
@@ -21,11 +22,13 @@ public:
     std::size_t getCurrentWaypointIndex() const;
     bool hasExecutablePath() const;
     std::optional<GridCoord> getCurrentWaypoint() const;
+    const std::vector<GridCoord>& getExecutionWaypoints() const;
 
     void advanceWaypoint();
 
 private:
     PathResult m_result;
+    std::vector<GridCoord> m_executionWaypoints;
     std::size_t m_currentWaypointIndex = 0;
     PathExecutionState m_state = PathExecutionState::NotFollowing;
 };
