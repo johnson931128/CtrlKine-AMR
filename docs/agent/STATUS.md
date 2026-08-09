@@ -3,8 +3,8 @@
 ## Current milestone
 
 PathPlanner first-version A* search. Goal detection, success-result handling,
-neighbor expansion, and score relaxation are implemented; no-path failure
-handling remains.
+neighbor expansion, score relaxation, and explicit no-path failure handling
+are implemented.
 
 ## Completed behavior
 
@@ -26,23 +26,26 @@ handling remains.
   cost.
 - Better or previously unknown routes update `cameFrom`, `gScore`, and
   `fScore`, and insert the neighbor into `openSet`.
+- When `openSet` is exhausted without reaching the goal, the planner returns
+  an explicit no-path failure with an empty path, zero `pathLength`, and the
+  completed search's `nodesExpanded` count.
 
 ## Verification
 
-- `mingw32-make all` passed on 2026-08-09 after neighbor expansion and score
-  relaxation changes.
+- `mingw32-make all` passed on 2026-08-09 after explicit no-path failure
+  handling was added.
 - No dedicated PathPlanner unit tests exist yet.
+- Commit and push could not be performed because this environment denies
+  writes to the repository's `.git` directory.
 
 ## Known limitations
 
-- No-path failure handling is not implemented.
-- When `openSet` is exhausted without reaching the goal, the planner still
-  returns the existing skeleton failure result rather than a dedicated
-  no-path category.
+- PathPlanner behavior does not yet have dedicated unit-test coverage.
 
 ## Next smallest step
 
-Implement explicit no-path failure handling after `openSet` is exhausted.
+Add dedicated PathPlanner unit tests for the approved result and failure
+contracts.
 
 ## Important decisions
 

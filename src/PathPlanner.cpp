@@ -6,7 +6,6 @@
 
 PathResult PathPlanner::plan(const MapData& mapData) {
     PathResult result;
-    result.message = "Path planner skeleton is ready. A* is not implemented yet.";
 
     const std::optional<GridCoord> startCell = getStartCell(mapData);
     if (!startCell.has_value()) {
@@ -73,23 +72,10 @@ PathResult PathPlanner::plan(const MapData& mapData) {
         }
     }
 
-    // TODO(student):
-    // 1. 建立 open set，裡面要能取出目前 fScore 最小的節點。
-    // 2. 建立 cameFrom，記錄每個節點是從哪個前驅走過來的。
-    // 3. 建立 gScore，記錄從 start 走到某節點的目前最佳成本。
-    // 4. 建立 fScore，通常是 gScore + heuristic。
-    // 5. 將 startCell 放入 open set，並初始化它的 gScore / fScore。
-    // 6. 反覆從 open set 取出 fScore 最小的節點作為 current。
-    // 7. 若 current == goalCell，呼叫 reconstructPath() 建立完整路徑。
-    // 8. 否則展開 current 的 neighbors。
-    // 9. 對每個 neighbor 計算 tentative gScore。
-    // 10. 若找到更好的成本，更新 cameFrom / gScore / fScore。
-    // 11. 若 neighbor 尚未在 open set，將它加入。
-    // 12. 若 open set 清空仍找不到 goal，回傳失敗結果。
-
-    // TODO(student):
-    // 這裡可以先用 getNeighbors() 與 heuristic() 做小單元測試，
-    // 確認地圖資料、格點轉換與 blocked 判斷都正確，再開始補 A* 主流程。
+    result.success = false;
+    result.path.clear();
+    result.pathLength = 0.0f;
+    result.message = "Planning failed: no traversable path exists.";
 
     return result;
 }

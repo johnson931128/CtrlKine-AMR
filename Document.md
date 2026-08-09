@@ -30,8 +30,8 @@ This document records what the application can do right now and how to operate i
   Move the robot back to its default start position and heading.
 - `Map Validation`
   Check whether the current map is ready for navigation or simulation.
-- `Path Planning Skeleton`
-  The project now has a PathPlanner module and planning entry point, but the A* core algorithm is still a teaching TODO scaffold.
+- `Path Planning`
+  The project includes a first-version grid-based A* planner and planning entry point.
 
 ## Toolbar
 
@@ -161,32 +161,25 @@ The current validator checks:
 - `Valid`
   - No validation issue is found
 
-## Path Planning Skeleton
+## Path Planning
 
-The current PathPlanner module is intentionally incomplete.
+The current PathPlanner module implements the first-version grid-based A* behavior.
 
 - `PathPlanner.hpp / PathPlanner.cpp`
   Already exist and are connected to Simulator.
 - `Enter`
   Calls the planner when validation is not `Error`.
 - `PathResult`
-  Currently records:
+  Records:
   - `success`
   - `path`
   - `message`
   - `nodesExpanded`
   - `pathLength`
 - `A* implementation`
-  Not finished on purpose.
-  The main flow and helper functions contain `TODO(student)` comments for the owner to complete:
-  - `getStartCell()`
-  - `getGoalCell()`
-  - `isCellBlocked()`
-  - `getNeighbors()`
-  - `heuristic()`
-  - `reconstructPath()`
-
-At the moment, the planner returns a teaching placeholder result instead of a real A* path.
+  Uses four-neighbor movement, a Manhattan heuristic, and score relaxation.
+  It returns explicit failures for missing poses, blocked endpoints, and no
+  traversable path.
 
 ## Save / Load Format
 
@@ -220,7 +213,7 @@ This is not an image export. It stores the actual editable map data.
 11. Press `Ctrl + 0` when you want to restore the default camera view.
 12. Press `Ctrl + R` when you want to move the robot back to its default pose.
 13. Press `V` when you want to re-run map validation manually.
-14. Press `Enter` when you want to trigger the current path planning skeleton.
+14. Press `Enter` when you want to trigger path planning.
 
 ## A* algorithm
 1. 演算法簡介 (Introduction to Algorithm)
