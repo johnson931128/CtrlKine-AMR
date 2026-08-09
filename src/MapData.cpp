@@ -18,8 +18,9 @@ float MapData::getGridResolution() const {
 }
 
 void MapData::setGridResolution(float gridResolution) {
-    if (gridResolution > 0.0f) {
+    if (gridResolution > 0.0f && gridResolution != m_mapper.getGridResolution()) {
         m_mapper.setGridResolution(gridResolution);
+        ++m_geometryRevision;
     }
 }
 
@@ -31,8 +32,16 @@ const sf::FloatRect& MapData::getWorldBoundary() const {
     return m_worldBoundary;
 }
 
+std::uint64_t MapData::getGeometryRevision() const {
+    return m_geometryRevision;
+}
+
 void MapData::setWorldBoundary(const sf::FloatRect& boundary) {
+    if (m_worldBoundary.position == boundary.position && m_worldBoundary.size == boundary.size) {
+        return;
+    }
     m_worldBoundary = boundary;
+    ++m_geometryRevision;
 }
 
 bool MapData::containsWorldPoint(const sf::Vector2f& worldPos) const {
@@ -47,10 +56,14 @@ bool MapData::containsWorldPoint(const sf::Vector2f& worldPos) const {
 }
 
 void MapData::clear() {
+    const bool geometryChanged = !m_obstacles.empty();
     m_obstacles.clear();
     m_workZones.clear();
     m_robotStartPose.reset();
     m_robotGoalPose.reset();
+    if (geometryChanged) {
+        ++m_geometryRevision;
+    }
 }
 
 bool MapData::saveToFile(const std::string& filename) const {
@@ -274,6 +287,7 @@ bool MapData::loadFromFile(const std::string& filename) {
         }
     }
 
+    loadedMap.m_geometryRevision = m_geometryRevision + 1;
     *this = loadedMap;
     return true;
 }
@@ -283,7 +297,9 @@ void MapData::addObstacle(const sf::Vector2f& worldPos) {
         return;
     }
 
-    m_obstacles.insert(m_mapper.worldToGrid(worldPos));
+    if (m_obstacles.insert(m_mapper.worldToGrid(worldPos)).second) {
+        ++m_geometryRevision;
+    }
 }
 
 void MapData::addObstacle(const GridCoord& coord) {
@@ -291,15 +307,21 @@ void MapData::addObstacle(const GridCoord& coord) {
         return;
     }
 
-    m_obstacles.insert(coord);
+    if (m_obstacles.insert(coord).second) {
+        ++m_geometryRevision;
+    }
 }
 
 void MapData::removeObstacle(const sf::Vector2f& worldPos) {
-    m_obstacles.erase(m_mapper.worldToGrid(worldPos));
+    if (m_obstacles.erase(m_mapper.worldToGrid(worldPos)) > 0) {
+        ++m_geometryRevision;
+    }
 }
 
 void MapData::removeObstacle(const GridCoord& coord) {
-    m_obstacles.erase(coord);
+    if (m_obstacles.erase(coord) > 0) {
+        ++m_geometryRevision;
+    }
 }
 
 bool MapData::isObstacleAt(const sf::Vector2f& worldPos) const {

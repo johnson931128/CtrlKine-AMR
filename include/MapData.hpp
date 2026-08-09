@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SFML/Graphics.hpp>
+#include <cstdint>
 #include <optional>
 #include <set>
 #include <string>
@@ -21,6 +22,7 @@ public:
     const CoordinateMapper& getMapper() const;
 
     const sf::FloatRect& getWorldBoundary() const;
+    std::uint64_t getGeometryRevision() const;
     void setWorldBoundary(const sf::FloatRect& boundary);
     bool containsWorldPoint(const sf::Vector2f& worldPos) const;
     void clear();
@@ -53,4 +55,5 @@ private:
     std::vector<WorkZone> m_workZones;
     std::optional<Pose2D> m_robotStartPose;
     std::optional<Pose2D> m_robotGoalPose;
+    std::uint64_t m_geometryRevision = 0;
 };

@@ -2,7 +2,9 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <utility>
@@ -25,6 +27,27 @@ constexpr float kInspectorTitleGap = 10.0f;
 constexpr float kInspectorScrollStep = 48.0f;
 const sf::Vector2f kDefaultRobotPosition(400.0f, 400.0f);
 const sf::Color kPathColor(30, 144, 255, 220);
+const sf::Color kParticleColor(138, 43, 226, 90);
+const sf::Color kEstimateColor(255, 20, 147, 230);
+const sf::Color kLidarColor(0, 170, 190, 45);
+
+Pose2D getAmrPose(const AMR& amr) {
+    return Pose2D{amr.getPosition(), amr.getHeading()};
+}
+
+std::string toLocalizationStateLabel(LocalizationState state) {
+    switch (state) {
+    case LocalizationState::Tracking:
+        return "Tracking";
+    case LocalizationState::Converged:
+        return "Converged";
+    case LocalizationState::Recovering:
+        return "Recovering";
+    case LocalizationState::Uninitialized:
+    default:
+        return "Uninitialized";
+    }
+}
 
 std::string toPathExecutionLabel(PathExecutionState state) {
     switch (state) {
@@ -147,6 +170,13 @@ Simulator::Simulator()
       m_amrConfig{100.0f, 60.0f, 30.0f, 10.0f, 70.0f, 80.0f, sf::Color(100, 150, 250), sf::Color(50, 50, 50)},
       m_amr(m_amrConfig, kDefaultRobotPosition),
       m_env(50.0f),
+      m_amclConfig(),
+      m_lidarConfig(),
+      m_odometryConfig(),
+      m_localizationRng(m_amclConfig.randomSeed),
+      m_lidarSimulator(m_lidarConfig),
+      m_odometrySimulator(m_odometryConfig),
+      m_localizer(m_amclConfig),
       m_isPanning(false),
       m_lastPanPixel({0, 0}),
       m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
@@ -168,9 +198,12 @@ Simulator::Simulator()
     updateWindowLayout();
 
     m_pathVertices.setPrimitiveType(sf::PrimitiveType::LineStrip);
+    m_particleVertices.setPrimitiveType(sf::PrimitiveType::Points);
     PathResult initialPathResult;
     initialPathResult.message = "Path planning has not run yet.";
     m_pathExecution.install(std::move(initialPathResult));
+    m_likelihoodField.rebuild(m_env.getMapData(), m_amclConfig.likelihoodMaxDistance);
+    m_odometrySimulator.reset(getAmrPose(m_amr));
     updateValidationResult();
 }
 
@@ -255,8 +288,10 @@ void Simulator::saveMap() {
 void Simulator::loadMap() {
     if (m_env.loadMapFromFile(m_mapFilename)) {
         clearSelection();
+        m_likelihoodField.rebuild(m_env.getMapData(), m_amclConfig.likelihoodMaxDistance);
         if (!synchronizeRobotToStartPose()) {
             clearPathExecution();
+            resetLocalizationForCurrentPose(false);
             updateValidationResult();
         }
         m_statusMessage = "Loaded map from " + m_mapFilename;
@@ -269,6 +304,8 @@ void Simulator::clearMap() {
     m_env.clearMap();
     clearPathExecution();
     clearSelection();
+    m_likelihoodField.rebuild(m_env.getMapData(), m_amclConfig.likelihoodMaxDistance);
+    resetLocalizationForCurrentPose(false);
     updateValidationResult();
     m_statusMessage = "Cleared map";
 }
@@ -288,6 +325,7 @@ void Simulator::resetRobotPose() {
         m_pathExecution
     );
     m_pathVertices.clear();
+    resetLocalizationForCurrentPose(m_env.getMapData().getRobotStartPose().has_value());
     updateValidationResult();
     m_statusMessage = "Reset robot pose";
 }
@@ -298,8 +336,30 @@ bool Simulator::synchronizeRobotToStartPose() {
     }
 
     m_pathVertices.clear();
+    resetLocalizationForCurrentPose(true);
     updateValidationResult();
     return true;
+}
+
+void Simulator::resetLocalizationForCurrentPose(bool initializeFromStart) {
+    m_localizationRng.seed(m_amclConfig.randomSeed);
+    const Pose2D currentPose = getAmrPose(m_amr);
+    resetLocalizationState(
+        m_env.getMapData(),
+        currentPose,
+        initializeFromStart,
+        m_odometrySimulator,
+        m_localizer,
+        m_localizationRng
+    );
+    m_likelihoodField.rebuildIfNeeded(
+        m_env.getMapData(),
+        m_amclConfig.likelihoodMaxDistance
+    );
+    m_currentScan = LaserScan{};
+    m_scanGroundTruthPose = currentPose;
+
+    rebuildLocalizationVisualization();
 }
 
 bool Simulator::applyConfiguredStartPose(
@@ -346,11 +406,87 @@ bool Simulator::isRobotAtInitialWaypoint(
         && mapData.getMapper().worldToGrid(amr.getPosition()) == *waypoint;
 }
 
+OdometryDelta Simulator::observeAcceptedMotion(
+    const Pose2D& acceptedPose,
+    OdometrySimulator& odometrySimulator,
+    AmclLocalizer& localizer,
+    std::mt19937& randomEngine
+) {
+    const OdometryDelta odometry = odometrySimulator.observe(
+        acceptedPose,
+        randomEngine
+    );
+    localizer.accumulateOdometry(odometry);
+    return odometry;
+}
+
+bool Simulator::resetLocalizationState(
+    const MapData& mapData,
+    const Pose2D& acceptedPose,
+    bool initializeFromStart,
+    OdometrySimulator& odometrySimulator,
+    AmclLocalizer& localizer,
+    std::mt19937& randomEngine
+) {
+    odometrySimulator.reset(acceptedPose);
+    if (initializeFromStart && mapData.getRobotStartPose().has_value()) {
+        return localizer.initializeLocal(
+            *mapData.getRobotStartPose(),
+            mapData,
+            randomEngine
+        );
+    }
+    localizer.reset();
+    return false;
+}
+
 void Simulator::updateValidationResult(bool updateStatusMessage) {
     m_validationResult = MapValidator::validate(m_env.getMapData(), m_amr);
 
     if (updateStatusMessage) {
         m_statusMessage = "Validation: " + toValidationLabel(m_validationResult.status);
+    }
+}
+
+void Simulator::updateLocalization() {
+    const MapData& mapData = m_env.getMapData();
+    const bool geometryChanged = !m_likelihoodField.isValid()
+        || m_likelihoodField.getSourceRevision() != mapData.getGeometryRevision();
+    m_likelihoodField.rebuildIfNeeded(mapData, m_amclConfig.likelihoodMaxDistance);
+    if (geometryChanged) {
+        m_localizer.forceSensorUpdate();
+    }
+
+    const Pose2D groundTruthPose = getAmrPose(m_amr);
+    observeAcceptedMotion(
+        groundTruthPose,
+        m_odometrySimulator,
+        m_localizer,
+        m_localizationRng
+    );
+    if (!m_localizer.needsSensorUpdate()) {
+        return;
+    }
+
+    m_currentScan = m_lidarSimulator.simulate(
+        groundTruthPose,
+        mapData,
+        m_localizationRng
+    );
+    m_scanGroundTruthPose = groundTruthPose;
+    if (m_localizer.updateWithScan(
+            m_currentScan,
+            m_likelihoodField,
+            mapData,
+            m_localizationRng)) {
+        rebuildLocalizationVisualization();
+    }
+}
+
+void Simulator::rebuildLocalizationVisualization() {
+    m_particleVertices.clear();
+    for (const Particle& particle : m_localizer.getParticles()) {
+        m_particleVertices.append(sf::Vertex{particle.pose.position, kParticleColor});
     }
 }
 
@@ -762,6 +898,8 @@ void Simulator::update(float dt) {
         }
     }
 
+    updateLocalization();
+
     const sf::Vector2f currentPosition = m_amr.getPosition();
     if (currentPosition.x != previousPosition.x
         || currentPosition.y != previousPosition.y
@@ -775,6 +913,8 @@ void Simulator::render() {
 
     m_window.setView(m_simView);
     m_env.draw(m_window, m_simView);
+    drawLidarScan();
+    drawLocalization();
     drawActivePath();
     m_amr.draw(m_window);
 
@@ -793,6 +933,63 @@ void Simulator::render() {
     drawInspector();
 
     m_window.display();
+}
+
+void Simulator::drawLidarScan() {
+    if (m_currentScan.ranges.empty()) {
+        return;
+    }
+
+    constexpr std::size_t kMaximumRenderedRays = 31;
+    const std::size_t stride = std::max<std::size_t>(
+        1,
+        (m_currentScan.ranges.size() + kMaximumRenderedRays - 1) / kMaximumRenderedRays
+    );
+    sf::VertexArray rays(sf::PrimitiveType::Lines);
+    for (std::size_t beam = 0; beam < m_currentScan.ranges.size(); beam += stride) {
+        const double range = m_currentScan.ranges[beam];
+        if (!std::isfinite(range)) {
+            continue;
+        }
+        const double angle = m_scanGroundTruthPose.heading
+            + m_currentScan.angleMin
+            + m_currentScan.angleIncrement * static_cast<double>(beam);
+        const sf::Vector2f endpoint(
+            m_scanGroundTruthPose.position.x + static_cast<float>(range * std::cos(angle)),
+            m_scanGroundTruthPose.position.y + static_cast<float>(range * std::sin(angle))
+        );
+        rays.append(sf::Vertex{m_scanGroundTruthPose.position, kLidarColor});
+        rays.append(sf::Vertex{endpoint, kLidarColor});
+    }
+    m_window.draw(rays);
+}
+
+void Simulator::drawLocalization() {
+    if (m_particleVertices.getVertexCount() > 0) {
+        m_window.draw(m_particleVertices);
+    }
+
+    const LocalizationEstimate& estimate = m_localizer.getEstimate();
+    if (!estimate.valid) {
+        return;
+    }
+
+    sf::CircleShape marker(9.0f, 24);
+    marker.setOrigin(sf::Vector2f(9.0f, 9.0f));
+    marker.setPosition(estimate.pose.position);
+    marker.setFillColor(sf::Color::Transparent);
+    marker.setOutlineThickness(3.0f);
+    marker.setOutlineColor(kEstimateColor);
+    m_window.draw(marker);
+
+    const sf::Vector2f headingEnd(
+        estimate.pose.position.x + std::cos(estimate.pose.heading) * 30.0f,
+        estimate.pose.position.y + std::sin(estimate.pose.heading) * 30.0f
+    );
+    sf::VertexArray heading(sf::PrimitiveType::Lines, 2);
+    heading[0] = sf::Vertex{estimate.pose.position, kEstimateColor};
+    heading[1] = sf::Vertex{headingEnd, kEstimateColor};
+    m_window.draw(heading);
 }
 
 void Simulator::drawActivePath() {
@@ -1012,6 +1209,53 @@ void Simulator::drawInspector() {
                   ? "manual"
                   : toPathExecutionLabel(m_pathExecution.getState()));
     drawSection("Robot State", robotInfo.str(), sf::Color(75, 75, 75));
+
+    const LocalizationEstimate& localizationEstimate = m_localizer.getEstimate();
+    const LocalizationStatistics& localizationStatistics = m_localizer.getStatistics();
+    const Pose2D& odometryPose = m_odometrySimulator.getOdometryPose();
+    const Pose2D groundTruthPose = getAmrPose(m_amr);
+    std::ostringstream localizationInfo;
+    localizationInfo << std::fixed << std::setprecision(1)
+                     << "State: " << toLocalizationStateLabel(localizationStatistics.state) << "\n"
+                     << "Particles: " << localizationStatistics.particleCount << "\n"
+                     << "ESS: " << localizationStatistics.effectiveSampleSize << "\n";
+    if (localizationEstimate.valid) {
+        const double positionError = std::hypot(
+            localizationEstimate.pose.position.x - groundTruthPose.position.x,
+            localizationEstimate.pose.position.y - groundTruthPose.position.y
+        );
+        const double headingError = std::abs(normalizeLocalizationAngle(
+            localizationEstimate.pose.heading - groundTruthPose.heading
+        ));
+        localizationInfo
+            << "Estimated X: " << localizationEstimate.pose.position.x << "\n"
+            << "Estimated Y: " << localizationEstimate.pose.position.y << "\n"
+            << "Estimated Heading: " << localizationEstimate.pose.heading * 57.2957795 << " deg\n"
+            << "Ground Truth X: " << groundTruthPose.position.x << "\n"
+            << "Ground Truth Y: " << groundTruthPose.position.y << "\n"
+            << "Ground Truth Heading: " << groundTruthPose.heading * 57.2957795 << " deg\n"
+            << "Position Error: " << positionError << "\n"
+            << "Heading Error: " << headingError * 57.2957795 << " deg\n"
+            << "Odom X: " << odometryPose.position.x << "\n"
+            << "Odom Y: " << odometryPose.position.y << "\n"
+            << "Odom Heading: " << odometryPose.heading * 57.2957795 << " deg\n"
+            << "Sigma X: " << std::sqrt(std::max(0.0, localizationEstimate.covariance.xx())) << "\n"
+            << "Sigma Y: " << std::sqrt(std::max(0.0, localizationEstimate.covariance.yy())) << "\n"
+            << "Sigma Heading: "
+            << std::sqrt(std::max(0.0, localizationEstimate.covariance.yawYaw())) * 57.2957795
+            << " deg";
+    } else {
+        localizationInfo
+            << "Estimated X: -\nEstimated Y: -\nEstimated Heading: -\n"
+            << "Ground Truth X: " << groundTruthPose.position.x << "\n"
+            << "Ground Truth Y: " << groundTruthPose.position.y << "\n"
+            << "Ground Truth Heading: " << groundTruthPose.heading * 57.2957795 << " deg\n"
+            << "Position Error: -\nHeading Error: -\n"
+            << "Odom X: " << odometryPose.position.x << "\n"
+            << "Odom Y: " << odometryPose.position.y << "\n"
+            << "Odom Heading: " << odometryPose.heading * 57.2957795 << " deg";
+    }
+    drawSection("Localization", localizationInfo.str(), sf::Color(75, 75, 75));
 
     std::ostringstream controlsInfo;
     controlsInfo << "Enter Plan Path\n"

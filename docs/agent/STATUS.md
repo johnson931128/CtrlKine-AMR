@@ -2,94 +2,132 @@
 
 ## Current milestone
 
-Start Pose and runtime AMR pose semantics are synchronized. Autonomous path
-execution now begins at the configured Start Pose without an implicit approach
-segment.
+The first native AMCL localization vertical slice is complete. Ground truth,
+simulated odometry, simulated LiDAR, particle belief, estimated pose, and
+estimated covariance are separate runtime concepts.
 
 ## Completed behavior
 
-- `MapData` remains the authoritative owner of configured Start and Goal poses.
-- Creating, replacing, or rotating Start through the editor immediately applies
-  its world position and heading to the AMR. Loading a map with Start also
-  applies that pose.
-- Planning reapplies configured Start before validation and A* so manual runtime
-  movement cannot leave execution starting from a stale AMR pose.
-- Every Start synchronization clears `PathExecution`, resets waypoint progress,
-  clears path visualization, and refreshes validation. Changing Start therefore
-  requires a new planning request.
-- `AMR::setPose()` updates runtime position and heading and synchronizes body and
-  wheel render shapes. Collision geometry queries use the same pose.
-- Ctrl+R resets to configured Start position and heading when Start exists.
-  Without Start it retains the previous default `(400, 400)` position and zero
-  heading. Reset preserves map configuration and clears execution and route
-  visualization.
-- Start remains stored at its exact configured world position. On the first
-  execution update only, an AMR already in the raw path's Start cell is accepted
-  as having reached waypoint zero without calling `moveToward()`. The existing
-  collision gate still runs before waypoint advancement. Later waypoints retain
-  exact center-target behavior.
-- `PathResult.path`, collinear execution-waypoint compression, clearance-aware
-  planning, progressive turning, and completion behavior are unchanged.
-
-## Ownership decisions
-
-- Simulator owns the synchronization, reset policy, initial-waypoint acceptance,
-  route invalidation, visualization clearing, and validation refresh.
-- AMR only owns and applies its runtime pose and geometry synchronization.
-- PathPlanner still reads Start from `MapData`; no planner behavior or raw path
-  semantics changed.
-- PathExecution remains responsible only for transient path state and waypoint
-  progress; no AMR or coordinate-mapping dependency was added.
+- `AMR` remains the sole ground-truth robot pose. `OdometrySimulator` observes
+  only accepted post-collision motion and maintains a distinct noisy odometry
+  pose. Rejected motion produces a zero increment.
+- `LidarSimulator` produces seeded 2D scans from ground truth using exact
+  ray/AABB obstacle intersections, world-boundary termination, configured FOV,
+  beam count, range limits, sensor heading, and Gaussian range noise.
+- `MapLikelihoodField` derives a bounded grid-vertex distance representation
+  from `MapData`, interpolates point queries, treats the world boundary as a
+  surface, and rebuilds from geometry revision plus geometry signature. It is
+  never persisted into map files.
+- One explicit `std::mt19937` owned by `Simulator` supplies LiDAR, odometry,
+  particle-motion, initialization, resampling, and recovery randomness. The
+  configured default seed is repeatable; tests never use wall-clock seeding.
+- `ParticleFilter` supports bounded local-Gaussian and global-free-space
+  initialization, differential `rot1/trans/rot2` motion with configurable
+  noise and lateral slip, stable likelihood-field weighting, normalization,
+  ESS, systematic resampling, adaptive KLD sampling, and random recovery
+  injection.
+- KLD sampling counts bins occupied by newly drawn particles, uses explicit
+  x/y/yaw bin sizes and the `pfErr`/positive-z-score `pfZ` formula, and enforces
+  configured minimum and maximum particle counts.
+- Recovery tracks prior-weighted slow/fast observation-quality averages.
+  Severe mismatch increases free-space random injection; zero recovery alphas
+  disable it. Invalid or beamless scans do not consume pending odometry.
+- `AmclLocalizer` accumulates odometry until translation/rotation thresholds,
+  composes one scan-to-scan motion increment, permits an immediate first scan,
+  applies the resample interval/ESS gates, and exposes Uninitialized, Tracking,
+  Converged, and Recovering diagnostics without using truth error.
+- Estimated x/y use the weighted mean; heading uses a circular mean; the full
+  3x3 x/y/yaw covariance uses wrapped yaw residuals and finite-value checks.
+- Start placement/replacement/rotation, Ctrl+R, planning synchronization, and
+  successful load reset odometry and locally initialize uncertain particles.
+  Clear without Start leaves localization uninitialized. Obstacle, resolution,
+  or boundary changes rebuild derived likelihood geometry and force a scan.
+- Path planning and execution still use `MapData` Start/Goal semantics. The
+  localization estimate is observational and is not a navigation input.
+- Simulator rendering uses vertex arrays for a low-alpha particle cloud and
+  lightweight LiDAR rays, plus a distinct estimated-pose marker. Inspector now
+  reports state, count, ESS, estimate, covariance sigmas, ground truth, errors,
+  and odometry pose.
 
 ## Verification
 
 - Clean `mingw32-make clean`, `mingw32-make all`, and `mingw32-make test`
   passed on 2026-08-09.
-- All six test executables were also run directly and passed.
-- `CoordinateMapperTests.exe`: 6 PASS, 0 FAIL.
-- `MapDataTests.exe`: 16 PASS, 0 FAIL.
-- `MapDataFileTests.exe`: 15 PASS, 0 FAIL.
-- `PathPlannerTests.exe`: 14 PASS, 0 FAIL.
-- `PathExecutionTests.exe`: 19 PASS, 0 FAIL.
-- `SimulatorRuntimeTests.exe`: 9 PASS, 0 FAIL.
-- Total automated result: 79 PASS, 0 FAIL. The previous 70-test baseline is
-  preserved.
-- The desktop executable launched. The available Windows automation failed to
-  enumerate or attach to the SFML window (`0x80070003`), so Start placement,
-  heading rotation, route clearing, reset, and motion are not claimed as
-  visually verified.
+- All nine test executables were then run directly and passed.
+- Existing baseline remained 79 PASS, 0 FAIL:
+  - `CoordinateMapperTests.exe`: 6 PASS.
+  - `MapDataTests.exe`: 16 PASS.
+  - `MapDataFileTests.exe`: 15 PASS.
+  - `PathPlannerTests.exe`: 14 PASS.
+  - `PathExecutionTests.exe`: 19 PASS.
+  - Existing `SimulatorRuntimeTests.exe` cases: 9 PASS.
+- New localization coverage is 41 PASS, 0 FAIL:
+  - Localization runtime seams added to `SimulatorRuntimeTests.exe`: 3 PASS.
+  - `LocalizationSensorTests.exe`: 18 PASS.
+  - `ParticleFilterTests.exe`: 17 PASS.
+  - `LocalizationIntegrationTests.exe`: 3 PASS.
+- Total automated result: 120 PASS, 0 FAIL.
+- Deterministic convergence passed with meaningful initial uncertainty,
+  noisy odometry, repeated scans, decreasing covariance, bounded particles,
+  and final Converged state.
+- Deterministic moving tracking passed: raw odometry diverged measurably while
+  LiDAR-corrected AMCL finished closer to truth and never copied truth directly.
+- Deterministic kidnapped-robot recovery passed: the unreset filter entered a
+  genuine recovery phase, injected global hypotheses, found the distant pose,
+  and reconverged within 60 bounded updates.
+- The complete three-scenario localization integration executable, using
+  300-2200 particles and 41-51 selected beams, completed in about 304 ms in the
+  measured headless run. No quadratic resampling or per-particle map rebuild is
+  present.
+- The desktop executable launched, remained responsive, and exposed the
+  expected window title. Windows automation could not enumerate/capture the
+  SFML window (`0x80070003`), so particle, LiDAR, estimate, Inspector, editing,
+  reset, and navigation visuals are not claimed as observed.
+
+## Ownership decisions
+
+- `Simulator` owns the single RNG and coordinates truth-derived sensor
+  simulation, accepted-motion odometry, map-derived rebuilds, AMCL updates,
+  rendering caches, and truth-error diagnostics.
+- `OdometrySimulator` and `LidarSimulator` may read ground truth only to create
+  simulated measurements. `AmclLocalizer` and `ParticleFilter` receive no
+  `AMR` reference and cannot copy its pose.
+- `MapData` remains authoritative persistent geometry; geometry revision is
+  non-persisted invalidation metadata.
+- `MapLikelihoodField` is derived read-only localization state. Probabilistic
+  logic has no rendering dependency; SFML drawing remains in `Simulator`.
 
 ## Known limitations
 
-- The enclosing-circle footprint remains deliberately conservative and can
-  reject a passage that the rectangular body could traverse at a particular
-  heading. Wheels are not included because runtime collision semantics use the
-  body only.
-- Only collinear execution points are compressed. There is no line-of-sight
-  shortcutting, spline generation, or curvature optimization.
-- Automatic motion remains deterministic stop-turn-go control. Goal-pose
-  heading is not executed.
-- Runtime collision acceptance samples the body's current corners and has no
-  swept-volume test, so very large frame times can still tunnel.
-- The Makefile does not track header dependencies; header changes require a
-  clean rebuild.
-- The exact interactive reproduction still needs a human-observed desktop pass
-  because window automation could not capture this SFML window.
+- The likelihood field samples exact obstacle-surface distance at grid vertices
+  and bilinearly interpolates between them; it is a first-version approximation
+  at the map grid resolution rather than a sub-cell Euclidean distance transform.
+- Default localization parameters and the deterministic production seed are
+  compiled defaults; there is no runtime parameter editor or persistence.
+- Global initialization is available through `AmclLocalizer` but has no desktop
+  hotkey or toolbar control.
+- LiDAR origin is the AMR center. There is no sensor offset, 3D geometry,
+  scan matching, dynamic-obstacle model, or localization persistence.
+- The planner/controller deliberately continue to use configured map semantics,
+  not the AMCL estimate.
+- Interactive visual acceptance remains unconfirmed because the available
+  Windows automation could not capture this SFML window.
 
 ## Next smallest step
 
-Perform the exact desktop acceptance scenario for Start placement across an
-obstacle wall, then verify Start replacement, Start heading rotation, Ctrl+R,
-route completion, progressive turning, and footprint clearance. Address only a
-reproduced failure from that pass.
+Perform a human-observed desktop acceptance pass: place and rotate Start, verify
+the uncertain particle cloud and estimate marker, move manually and by planned
+path, edit an obstacle, use Ctrl+R, and confirm Inspector/visual refresh and
+navigation behavior. Address only a reproduced runtime or presentation defect.
 
 ## Important decisions
 
-- Start synchronization occurs immediately on editor mutation and again before
-  planning to recover from intervening manual AMR movement.
-- An off-center Start is not snapped to the grid-cell center. Only waypoint zero
-  uses same-cell acceptance, preventing a residual approach-to-center segment
-  without weakening later corner-waypoint behavior.
-- Successful map load follows the same configured-Start semantics as editor
-  placement. Map clear or Start deletion does not teleport the AMR; Ctrl+R uses
-  the default pose when no Start exists.
+- The first native implementation uses standard AMCL concepts without ROS or an
+  external localization dependency.
+- Pending frame increments are composed into one scan-to-scan differential
+  motion update so motion uncertainty does not depend on frame segmentation.
+- Adaptive KLD resampling is standard sequential sampling over the normalized
+  CDF; the standalone systematic resampler remains available and tested for
+  fixed-count low-variance resampling.
+- Convergence depends only on belief covariance. Ground-truth error is displayed
+  and asserted in simulation tests but never fed into inference.

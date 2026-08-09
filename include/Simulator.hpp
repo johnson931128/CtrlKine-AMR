@@ -2,11 +2,16 @@
 
 #include <SFML/Graphics.hpp>
 #include <optional>
+#include <random>
 #include <string>
 
 #include "AMR.hpp"
+#include "AmclLocalizer.hpp"
 #include "Environment.hpp"
+#include "LidarSimulator.hpp"
+#include "MapLikelihoodField.hpp"
 #include "MapValidator.hpp"
+#include "OdometrySimulator.hpp"
 #include "PathExecution.hpp"
 #include "SelectedObject.hpp"
 
@@ -35,6 +40,8 @@ bool handleToolbarClick(const sf::Vector2i& pixelPos);
 void drawToolbar();
 void drawInspector();
 void drawActivePath();
+void drawLocalization();
+void drawLidarScan();
 
 /* UI layout and viewport management */
 void updateCursorPreview();
@@ -50,6 +57,9 @@ void clearMap();
 void resetView();
 void resetRobotPose();
 bool synchronizeRobotToStartPose();
+void resetLocalizationForCurrentPose(bool initializeFromStart);
+void updateLocalization();
+void rebuildLocalizationVisualization();
 
 /* Validation and path planning */
 void updateValidationResult(bool updateStatusMessage = false);
@@ -81,6 +91,20 @@ static bool isRobotAtInitialWaypoint(
     const AMR& amr,
     const PathExecution& pathExecution
 );
+static OdometryDelta observeAcceptedMotion(
+    const Pose2D& acceptedPose,
+    OdometrySimulator& odometrySimulator,
+    AmclLocalizer& localizer,
+    std::mt19937& randomEngine
+);
+static bool resetLocalizationState(
+    const MapData& mapData,
+    const Pose2D& acceptedPose,
+    bool initializeFromStart,
+    OdometrySimulator& odometrySimulator,
+    AmclLocalizer& localizer,
+    std::mt19937& randomEngine
+);
 
 friend struct SimulatorRuntimeTestAccess;
 
@@ -101,6 +125,19 @@ bool m_hasUiFont;
 AMRConfig m_amrConfig;
 AMR m_amr;
 Environment m_env;
+
+/* Localization simulation and inference */
+AmclConfig m_amclConfig;
+LidarConfig m_lidarConfig;
+OdometryConfig m_odometryConfig;
+std::mt19937 m_localizationRng;
+LidarSimulator m_lidarSimulator;
+OdometrySimulator m_odometrySimulator;
+MapLikelihoodField m_likelihoodField;
+AmclLocalizer m_localizer;
+LaserScan m_currentScan;
+Pose2D m_scanGroundTruthPose;
+sf::VertexArray m_particleVertices;
 
 /* Timing and camera interaction state */
 sf::Clock m_clock;

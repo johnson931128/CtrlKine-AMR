@@ -1,6 +1,7 @@
 #include "Simulator.hpp"
 
 #include <cmath>
+#include <random>
 #include <vector>
 
 #include "TestSupport.hpp"
@@ -29,6 +30,35 @@ struct SimulatorRuntimeTestAccess {
         const PathExecution& pathExecution
     ) {
         return Simulator::isRobotAtInitialWaypoint(mapData, amr, pathExecution);
+    }
+
+    static OdometryDelta observeAcceptedMotion(
+        const Pose2D& acceptedPose,
+        OdometrySimulator& odometrySimulator,
+        AmclLocalizer& localizer,
+        std::mt19937& randomEngine
+    ) {
+        return Simulator::observeAcceptedMotion(
+            acceptedPose, odometrySimulator, localizer, randomEngine
+        );
+    }
+
+    static bool resetLocalizationState(
+        const MapData& mapData,
+        const Pose2D& acceptedPose,
+        bool initializeFromStart,
+        OdometrySimulator& odometrySimulator,
+        AmclLocalizer& localizer,
+        std::mt19937& randomEngine
+    ) {
+        return Simulator::resetLocalizationState(
+            mapData,
+            acceptedPose,
+            initializeFromStart,
+            odometrySimulator,
+            localizer,
+            randomEngine
+        );
     }
 };
 
@@ -71,6 +101,17 @@ bool executionIsCleared(const PathExecution& execution) {
         && !execution.getCurrentWaypoint().has_value()
         && execution.getResult().path.empty()
         && execution.getExecutionWaypoints().empty();
+}
+
+AmclConfig localizationTestConfig() {
+    AmclConfig config;
+    config.minParticles = 50;
+    config.maxParticles = 50;
+    config.initialParticleCount = 50;
+    config.initialStdDevX = 10.0;
+    config.initialStdDevY = 10.0;
+    config.initialStdDevYaw = 0.1;
+    return config;
 }
 }
 
@@ -230,6 +271,67 @@ int main() {
         execution.install(successfulResult({GridCoord{0, 0}, GridCoord{1, 0}}));
         return !SimulatorRuntimeTestAccess::isRobotAtInitialWaypoint(map, robot, execution)
             && execution.getCurrentWaypointIndex() == 0;
+    });
+
+    runTest(suite, "LOCALIZATION-001", "only accepted post-rollback pose produces odometry motion", [] {
+        OdometryConfig odometryConfig;
+        odometryConfig.translationStdDevPerDistance = 0.0;
+        odometryConfig.translationStdDevPerRotation = 0.0;
+        odometryConfig.rotationStdDevPerRotation = 0.0;
+        odometryConfig.rotationStdDevPerDistance = 0.0;
+        OdometrySimulator odometry(odometryConfig);
+        const Pose2D previousAccepted{sf::Vector2f(100.0f, 100.0f), 0.0f};
+        odometry.reset(previousAccepted);
+        AmclLocalizer localizer(localizationTestConfig());
+        std::mt19937 randomEngine(100);
+        const OdometryDelta rejected = SimulatorRuntimeTestAccess::observeAcceptedMotion(
+            previousAccepted, odometry, localizer, randomEngine
+        );
+        const Pose2D nextAccepted{sf::Vector2f(150.0f, 100.0f), 0.0f};
+        const OdometryDelta accepted = SimulatorRuntimeTestAccess::observeAcceptedMotion(
+            nextAccepted, odometry, localizer, randomEngine
+        );
+        return near(static_cast<float>(rejected.translation), 0.0f)
+            && near(static_cast<float>(rejected.rotation1), 0.0f)
+            && near(static_cast<float>(rejected.rotation2), 0.0f)
+            && near(static_cast<float>(accepted.translation), 50.0f)
+            && samePoint(odometry.getOdometryPose().position, nextAccepted.position);
+    });
+
+    runTest(suite, "LOCALIZATION-002", "Start reset initializes uncertain belief and odometry separately", [] {
+        MapData map(50.0f);
+        const Pose2D start{sf::Vector2f(125.0f, 140.0f), 0.4f};
+        map.setRobotStartPose(start);
+        const AmclConfig config = localizationTestConfig();
+        AmclLocalizer localizer(config);
+        OdometrySimulator odometry;
+        std::mt19937 randomEngine(101);
+        const bool initialized = SimulatorRuntimeTestAccess::resetLocalizationState(
+            map, start, true, odometry, localizer, randomEngine
+        );
+        return initialized
+            && localizer.getEstimate().valid
+            && localizer.getEstimate().particleCount == config.initialParticleCount
+            && localizer.getEstimate().covariance.xx() > 0.0
+            && localizer.getEstimate().covariance.yy() > 0.0
+            && samePoint(odometry.getOdometryPose().position, start.position)
+            && near(odometry.getOdometryPose().heading, start.heading);
+    });
+
+    runTest(suite, "LOCALIZATION-003", "reset without Start leaves localization explicitly uninitialized", [] {
+        MapData map(50.0f);
+        const Pose2D acceptedPose{sf::Vector2f(40.0f, 50.0f), -0.2f};
+        AmclLocalizer localizer(localizationTestConfig());
+        OdometrySimulator odometry;
+        std::mt19937 randomEngine(102);
+        const bool initialized = SimulatorRuntimeTestAccess::resetLocalizationState(
+            map, acceptedPose, false, odometry, localizer, randomEngine
+        );
+        return !initialized
+            && !localizer.getEstimate().valid
+            && localizer.getStatistics().state == LocalizationState::Uninitialized
+            && samePoint(odometry.getOdometryPose().position, acceptedPose.position)
+            && near(odometry.getOdometryPose().heading, acceptedPose.heading);
     });
 
     return suite.exitCode();
