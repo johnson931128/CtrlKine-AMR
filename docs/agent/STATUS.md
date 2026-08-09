@@ -29,23 +29,26 @@ are implemented.
 - When `openSet` is exhausted without reaching the goal, the planner returns
   an explicit no-path failure with an empty path, zero `pathLength`, and the
   completed search's `nodesExpanded` count.
+- Dedicated `PathPlanner` tests cover missing poses, blocked endpoints, the
+  same-cell path, a reachable path, and explicit no-path failure contracts.
 
 ## Verification
 
-- `mingw32-make all` passed on 2026-08-09 after explicit no-path failure
-  handling was added.
-- No dedicated PathPlanner unit tests exist yet.
-- Commit and push could not be performed because this environment denies
-  writes to the repository's `.git` directory.
+- `mingw32-make all` passed on 2026-08-09.
+- `build/tests/PathPlannerTests.exe` built and passed: 7 PASS, 0 FAIL.
+- `mingw32-make test` ran all four test executables. PathPlanner passed with
+  7 PASS, 0 FAIL; the existing suites retain 14 specification failures, so
+  the aggregate test target exits non-zero.
 
 ## Known limitations
 
-- PathPlanner behavior does not yet have dedicated unit-test coverage.
+- Existing CoordinateMapper, MapData, and MapDataFile specification failures
+  remain; they are outside this task's scope.
 
 ## Next smallest step
 
-Add dedicated PathPlanner unit tests for the approved result and failure
-contracts.
+Investigate the existing CoordinateMapper and MapData specification failures
+before extending further PathPlanner coverage.
 
 ## Important decisions
 

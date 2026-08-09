@@ -18,7 +18,8 @@ TEST_BUILD_DIR = $(BUILD_DIR)/tests
 TEST_MAPPER_TARGET = $(TEST_BUILD_DIR)/CoordinateMapperTests.exe
 TEST_MAP_TARGET = $(TEST_BUILD_DIR)/MapDataTests.exe
 TEST_FILE_TARGET = $(TEST_BUILD_DIR)/MapDataFileTests.exe
-TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET)
+TEST_PATH_TARGET = $(TEST_BUILD_DIR)/PathPlannerTests.exe
+TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET) $(TEST_PATH_TARGET)
 
 all: $(TARGET)
 
@@ -27,6 +28,7 @@ test: $(TEST_TARGETS)
 	$(TEST_MAPPER_TARGET) || status=1; \
 	$(TEST_MAP_TARGET) || status=1; \
 	$(TEST_FILE_TARGET) || status=1; \
+	$(TEST_PATH_TARGET) || status=1; \
 	exit $$status
 
 $(TARGET): $(OBJS)
@@ -48,6 +50,10 @@ $(TEST_BUILD_DIR)/MapDataFileTests.o: tests/MapDataFileTests.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
 
+$(TEST_BUILD_DIR)/PathPlannerTests.o: tests/PathPlannerTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
 $(TEST_BUILD_DIR)/MapData.o: src/MapData.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -60,6 +66,13 @@ $(TEST_MAP_TARGET): $(TEST_BUILD_DIR)/MapDataTests.o $(TEST_BUILD_DIR)/MapData.o
 
 $(TEST_FILE_TARGET): $(TEST_BUILD_DIR)/MapDataFileTests.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_PATH_TARGET): $(TEST_BUILD_DIR)/PathPlannerTests.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_BUILD_DIR)/PathPlanner.o: src/PathPlanner.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)
