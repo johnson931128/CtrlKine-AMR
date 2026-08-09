@@ -2,59 +2,46 @@
 
 ## Current milestone
 
-PathPlanner first-version A* search. Goal detection, success-result handling,
-neighbor expansion, score relaxation, and explicit no-path failure handling
-are implemented.
+Approved `MapCoordinateSpec.md` conformance is complete for CoordinateMapper,
+MapData runtime behavior, and map persistence.
 
 ## Completed behavior
 
-- Approved `docs/specs/PathPlannerSpec.md` and synchronized specification index.
-- Start and goal poses are converted from `MapData` world positions to
-  `GridCoord` through `CoordinateMapper`.
-- Boundary and obstacle cells are treated as blocked.
-- Four-neighbor candidates are generated.
-- Manhattan heuristic is implemented.
-- `reconstructPath()` returns the complete start-to-goal path.
-- A* state is initialized with `openSet`, empty `cameFrom`, `gScore`, and
-  `fScore`; the start node is initialized and inserted into `openSet`.
-- `openSet` selection scans `fScore` and removes the lowest-`fScore` current
-  cell.
-- Extracted cells increment `nodesExpanded`.
-- When the extracted current cell is the goal, the planner returns a success
-  result with the reconstructed path and grid-step `pathLength`.
-- Non-goal current cells expand valid four-neighbor cells with unit movement
-  cost.
-- Better or previously unknown routes update `cameFrom`, `gScore`, and
-  `fScore`, and insert the neighbor into `openSet`.
-- When `openSet` is exhausted without reaching the goal, the planner returns
-  an explicit no-path failure with an empty path, zero `pathLength`, and the
-  completed search's `nodesExpanded` count.
-- Dedicated `PathPlanner` tests cover missing poses, blocked endpoints, the
-  same-cell path, a reachable path, and explicit no-path failure contracts.
+- `CoordinateMapper` and `MapData` always retain a positive grid resolution.
+- World-boundary containment uses half-open right and bottom edges.
+- World-position obstacle insertion validates the input point; `GridCoord`
+  insertion validates the corresponding cell center.
+- Map loading strictly validates required records, field counts, declared
+  obstacle/work-zone counts, and specification value constraints.
+- Failed loads do not propagate parsing exceptions and leave existing map
+  state unchanged.
+- Existing first-version A* PathPlanner behavior remains unchanged.
 
 ## Verification
 
-- `mingw32-make all` passed on 2026-08-09.
-- `build/tests/PathPlannerTests.exe` built and passed: 7 PASS, 0 FAIL.
-- `mingw32-make test` ran all four test executables. PathPlanner passed with
-  7 PASS, 0 FAIL; the existing suites retain 14 specification failures, so
-  the aggregate test target exits non-zero.
+- Clean `mingw32-make all` passed on 2026-08-09.
+- `mingw32-make test` passed all four suites: 43 PASS, 0 FAIL.
+- `CoordinateMapperTests.exe`: 6 PASS, 0 FAIL.
+- `MapDataTests.exe`: 15 PASS, 0 FAIL.
+- `MapDataFileTests.exe`: 15 PASS, 0 FAIL.
+- `PathPlannerTests.exe`: 7 PASS, 0 FAIL.
 
 ## Known limitations
 
-- Existing CoordinateMapper, MapData, and MapDataFile specification failures
-  remain; they are outside this task's scope.
+- The Makefile does not track header dependencies, so a clean rebuild is
+  required after header-only changes to avoid stale binaries.
+- No approved `MapCoordinateSpec.md` failures remain.
 
 ## Next smallest step
 
-Investigate the existing CoordinateMapper and MapData specification failures
-before extending further PathPlanner coverage.
+Add Makefile header-dependency tracking as a separate, narrowly scoped build
+reliability milestone.
 
 ## Important decisions
 
-- Planning uses four-neighbor movement with unit grid-step cost and a
-  Manhattan heuristic.
-- `pathLength` is a grid-step count: path cell count minus one.
-- The extracted goal cell is included in `nodesExpanded`.
-- Equal-`fScore` tie-breaking and exact message wording are intentionally not
-  fixed by the approved specification.
+- Invalid CoordinateMapper construction falls back to the valid default
+  resolution of `50.0f`; invalid setter input preserves the current value.
+- World-position and `GridCoord` obstacle overloads retain their distinct
+  boundary-validation semantics from `MAP-003`.
+- Loading builds validated temporary state and assigns it only after the full
+  file passes validation.

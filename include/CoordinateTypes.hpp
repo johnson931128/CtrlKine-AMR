@@ -27,10 +27,14 @@ struct Pose2D {
 class CoordinateMapper {
 public:
     explicit CoordinateMapper(float gridResolution = 50.0f)
-        : m_gridResolution(gridResolution) {}
+        : m_gridResolution(gridResolution > 0.0f ? gridResolution : 50.0f) {}
 
     float getGridResolution() const { return m_gridResolution; }
-    void setGridResolution(float gridResolution) { m_gridResolution = gridResolution; }
+    void setGridResolution(float gridResolution) {
+        if (gridResolution > 0.0f) {
+            m_gridResolution = gridResolution;
+        }
+    }
 
     GridCoord worldToGrid(const sf::Vector2f& worldPos) const {
         return GridCoord{

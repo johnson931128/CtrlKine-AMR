@@ -39,6 +39,13 @@ int main() {
         map.addObstacle(sf::Vector2f(100.0f, 25.0f));
         return accepted && map.getObstacles().size() == 1;
     });
+    runTest(suite, "MAP-003", "world position uses point boundary check", [] {
+        MapData partialCellMap(50.0f);
+        partialCellMap.setWorldBoundary(
+            sf::FloatRect(sf::Vector2f(0.0f, 0.0f), sf::Vector2f(20.0f, 20.0f)));
+        partialCellMap.addObstacle(sf::Vector2f(10.0f, 10.0f));
+        return partialCellMap.isObstacleAt(GridCoord{0, 0});
+    });
     runTest(suite, "MAP-003", "add obstacle by GridCoord with boundary check", [&] {
         map.clear();
         map.addObstacle(GridCoord{1, 1});

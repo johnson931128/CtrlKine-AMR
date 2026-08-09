@@ -42,8 +42,8 @@ bool MapData::containsWorldPoint(const sf::Vector2f& worldPos) const {
         m_worldBoundary.position.y + m_worldBoundary.size.y
     );
 
-    return worldPos.x >= topLeft.x && worldPos.x <= bottomRight.x
-        && worldPos.y >= topLeft.y && worldPos.y <= bottomRight.y;
+    return worldPos.x >= topLeft.x && worldPos.x < bottomRight.x
+        && worldPos.y >= topLeft.y && worldPos.y < bottomRight.y;
 }
 
 void MapData::clear() {
@@ -107,8 +107,21 @@ bool MapData::loadFromFile(const std::string& filename) {
         return false;
     }
 
-    MapData loadedMap(getGridResolution());
-    loadedMap.setWorldBoundary(m_worldBoundary);
+    float gridResolution = 0.0f;
+    sf::FloatRect worldBoundary;
+    std::optional<Pose2D> startPose;
+    std::optional<Pose2D> goalPose;
+    std::vector<GridCoord> obstacles;
+    std::vector<sf::FloatRect> workZones;
+    std::size_t declaredObstacleCount = 0;
+    std::size_t declaredWorkZoneCount = 0;
+
+    bool hasGridResolution = false;
+    bool hasWorldBoundary = false;
+    bool hasStartPose = false;
+    bool hasGoalPose = false;
+    bool hasObstacleCount = false;
+    bool hasWorkZoneCount = false;
 
     std::string line;
     while (std::getline(file, line)) {
@@ -118,69 +131,145 @@ bool MapData::loadFromFile(const std::string& filename) {
 
         std::istringstream iss(line);
         std::string key;
-        iss >> key;
+        if (!(iss >> key)) {
+            continue;
+        }
+
+        std::string extra;
 
         if (key == "grid_resolution") {
             float resolution = 0.0f;
-            if (!(iss >> resolution) || resolution <= 0.0f) {
+            if (!(iss >> resolution) || (iss >> extra) || !(resolution > 0.0f)) {
                 return false;
             }
-            loadedMap.setGridResolution(resolution);
+            gridResolution = resolution;
+            hasGridResolution = true;
         } else if (key == "world_boundary") {
             float x = 0.0f;
             float y = 0.0f;
             float width = 0.0f;
             float height = 0.0f;
-            if (!(iss >> x >> y >> width >> height)) {
+            if (!(iss >> x >> y >> width >> height) || (iss >> extra)
+                || !(width > 0.0f) || !(height > 0.0f)) {
                 return false;
             }
-            loadedMap.setWorldBoundary(sf::FloatRect(sf::Vector2f(x, y), sf::Vector2f(width, height)));
+            worldBoundary = sf::FloatRect(sf::Vector2f(x, y), sf::Vector2f(width, height));
+            hasWorldBoundary = true;
         } else if (key == "start_pose") {
             std::string marker;
             if (!(iss >> marker)) {
                 return false;
             }
-            if (marker != "none") {
-                float y = 0.0f;
-                float heading = 0.0f;
-                const float x = std::stof(marker);
-                if (!(iss >> y >> heading)) {
+
+            if (marker == "none") {
+                if (iss >> extra) {
                     return false;
                 }
-                loadedMap.setRobotStartPose(Pose2D{sf::Vector2f(x, y), heading});
+                startPose.reset();
+            } else {
+                std::istringstream xStream(marker);
+                float x = 0.0f;
+                float y = 0.0f;
+                float heading = 0.0f;
+                if (!(xStream >> x) || (xStream >> extra)
+                    || !(iss >> y >> heading) || (iss >> extra)) {
+                    return false;
+                }
+                startPose = Pose2D{sf::Vector2f(x, y), heading};
             }
+            hasStartPose = true;
         } else if (key == "goal_pose") {
             std::string marker;
             if (!(iss >> marker)) {
                 return false;
             }
-            if (marker != "none") {
-                float y = 0.0f;
-                float heading = 0.0f;
-                const float x = std::stof(marker);
-                if (!(iss >> y >> heading)) {
+
+            if (marker == "none") {
+                if (iss >> extra) {
                     return false;
                 }
-                loadedMap.setRobotGoalPose(Pose2D{sf::Vector2f(x, y), heading});
+                goalPose.reset();
+            } else {
+                std::istringstream xStream(marker);
+                float x = 0.0f;
+                float y = 0.0f;
+                float heading = 0.0f;
+                if (!(xStream >> x) || (xStream >> extra)
+                    || !(iss >> y >> heading) || (iss >> extra)) {
+                    return false;
+                }
+                goalPose = Pose2D{sf::Vector2f(x, y), heading};
             }
-        } else if (key == "obstacle_count" || key == "work_zone_count") {
-            continue;
-        } else if (key == "obstacle") {
-            GridCoord coord;
-            if (!(iss >> coord.col >> coord.row)) {
+            hasGoalPose = true;
+        } else if (key == "obstacle_count") {
+            long long count = 0;
+            if (!(iss >> count) || (iss >> extra) || count < 0) {
                 return false;
             }
-            loadedMap.addObstacle(coord);
+            declaredObstacleCount = static_cast<std::size_t>(count);
+            hasObstacleCount = true;
+        } else if (key == "work_zone_count") {
+            long long count = 0;
+            if (!(iss >> count) || (iss >> extra) || count < 0) {
+                return false;
+            }
+            declaredWorkZoneCount = static_cast<std::size_t>(count);
+            hasWorkZoneCount = true;
+        } else if (key == "obstacle") {
+            GridCoord coord;
+            if (!(iss >> coord.col >> coord.row) || (iss >> extra)) {
+                return false;
+            }
+            obstacles.push_back(coord);
         } else if (key == "work_zone") {
             float x = 0.0f;
             float y = 0.0f;
             float width = 0.0f;
             float height = 0.0f;
-            if (!(iss >> x >> y >> width >> height)) {
+            if (!(iss >> x >> y >> width >> height) || (iss >> extra)
+                || !(width > 0.0f) || !(height > 0.0f)) {
                 return false;
             }
-            loadedMap.addWorkZone(sf::FloatRect(sf::Vector2f(x, y), sf::Vector2f(width, height)));
+            workZones.emplace_back(sf::Vector2f(x, y), sf::Vector2f(width, height));
         } else {
+            return false;
+        }
+    }
+
+    if (file.bad() || !hasGridResolution || !hasWorldBoundary || !hasStartPose
+        || !hasGoalPose || !hasObstacleCount || !hasWorkZoneCount
+        || declaredObstacleCount != obstacles.size()
+        || declaredWorkZoneCount != workZones.size()) {
+        return false;
+    }
+
+    MapData loadedMap(gridResolution);
+    loadedMap.setWorldBoundary(worldBoundary);
+
+    for (const GridCoord& obstacle : obstacles) {
+        if (!loadedMap.containsWorldPoint(loadedMap.getMapper().gridToWorldCenter(obstacle))) {
+            return false;
+        }
+        loadedMap.addObstacle(obstacle);
+    }
+
+    for (const sf::FloatRect& workZone : workZones) {
+        const std::size_t previousCount = loadedMap.getWorkZones().size();
+        loadedMap.addWorkZone(workZone);
+        if (loadedMap.getWorkZones().size() == previousCount) {
+            return false;
+        }
+    }
+
+    if (startPose.has_value()) {
+        loadedMap.setRobotStartPose(*startPose);
+        if (!loadedMap.getRobotStartPose().has_value()) {
+            return false;
+        }
+    }
+    if (goalPose.has_value()) {
+        loadedMap.setRobotGoalPose(*goalPose);
+        if (!loadedMap.getRobotGoalPose().has_value()) {
             return false;
         }
     }
@@ -194,10 +283,14 @@ void MapData::addObstacle(const sf::Vector2f& worldPos) {
         return;
     }
 
-    addObstacle(m_mapper.worldToGrid(worldPos));
+    m_obstacles.insert(m_mapper.worldToGrid(worldPos));
 }
 
 void MapData::addObstacle(const GridCoord& coord) {
+    if (!containsWorldPoint(m_mapper.gridToWorldCenter(coord))) {
+        return;
+    }
+
     m_obstacles.insert(coord);
 }
 
