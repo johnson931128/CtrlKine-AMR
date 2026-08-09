@@ -1,188 +1,102 @@
 # AGENTS.md
 
-## Communication
+## Goal
 
-- Use Traditional Chinese for explanations and reports.
-- Before modifying files, briefly state:
-  - Task goal
-  - Relevant specification
-  - Expected file changes
-- After completing a task, report:
-  - Modified files
-  - Behavior changes
-  - Test results
-  - Unverified items
-- Keep explanations clear and practical.
-- Do not assume the project owner understands the internal implementation.
+Make small, correct, and reviewable changes.
+
+Do not optimize for maximum implementation speed.
+Prefer code that is easy to understand and maintain.
+
+## Workflow
+
+For every task:
+
+1. Read the relevant specification under `docs/specs/`.
+2. Inspect the related header, implementation, and tests.
+3. Identify the smallest change needed.
+4. Implement only that change.
+5. Build or test when applicable.
+6. If verification fails, inspect the cause and make the smallest fix.
+7. When the requested task is complete, STOP and report.
 
 ## Scope
 
-- Only perform the requested task.
-- Do not add unrelated features.
-- Do not perform large refactors unless explicitly requested.
-- Do not introduce new third-party libraries unless explicitly approved.
-- Preserve behavior outside the requested scope.
-- Keep the project buildable after each task.
-
-## Project Direction
-
-Current priority:
-
-1. Specifications and tests for core modules
-2. Map validation
-3. A* path planning
-4. Path rendering
-5. Robot path following
-6. Sensor simulation
-
-Do not start later milestones before the current milestone is verified.
-
-## Specifications
-
-Approved specifications are stored under:
-
-`docs/specs/`
-
-The specification index is:
-
-`docs/specs/README.md`
-
-Before modifying a module:
-
-1. Read the relevant specification.
-2. Read related tests.
-3. Inspect the relevant implementation.
-
-Expected behavior priority:
-
-1. Approved specification
-2. Approved task acceptance criteria
-3. Tests matching the approved specification
-4. Existing implementation
-5. Comments and historical documents
-
-Existing code and tests are not automatically correct.
-
-For a new feature or behavior change:
-
-1. Add or update the relevant specification as Draft.
-2. Define acceptance criteria and edge cases.
-3. Wait for project-owner approval.
-4. Add or update tests.
-5. Implement the approved behavior.
-6. Run automated tests and required manual checks.
-7. Update the specification status.
-
-Do not weaken or rewrite a specification only to make incorrect code pass.
-
-## Tests
-
-Automated tests are stored under:
-
-`tests/`
-
-Prefer automated tests for:
-
-- Coordinate conversion
-- Map data
-- Save and load
-- Map validation
-- Path planning
-- Other deterministic non-UI logic
-
-Use manual acceptance tests for:
-
-- UI layout
-- Inspector scrolling
-- Window resizing
-- Grid appearance
-- Mouse and keyboard interaction
-- Rendering
-
-Tests should reference specification requirement IDs when practical.
+Only perform the explicitly requested task.
 
 Do not:
 
-- Delete or weaken failing tests without an approved requirement change.
-- Report tests as passed without running them.
-- Treat an expected failure as a completed feature.
+- Implement the next milestone automatically.
+- Modify unrelated files.
+- Perform large refactors unless requested.
+- Add new abstractions or dependencies unless necessary.
+- Rewrite working code only for style.
 
-## Bug Handling
+If a task is too large, split it into smaller steps and implement only the current step.
 
-When a bug is found:
+## Source of Truth
 
-1. Reproduce the problem.
-2. Record the observed behavior.
-3. Compare it with the specification.
-4. Identify the affected requirement.
-5. Add a regression test when practical.
-6. Fix only the affected behavior.
-7. Run relevant tests.
-8. Report the root cause and verification result.
+Priority:
 
-If expected behavior is missing or unclear, stop and request a decision before changing code.
+1. Approved specifications in `docs/specs/`
+2. Explicit task requirements
+3. Tests
+4. Existing implementation
 
-## Task Interruption
+Do not invent important behavior when the specification is unclear.
 
-Stop the task and report when:
+## Architecture
 
-- Required behavior is undefined.
-- Specifications conflict.
-- A large unrelated refactor is required.
-- A new dependency is required.
-- Save-file compatibility may be broken.
-- Required tools or test environments are unavailable.
-- An unrelated bug blocks progress.
-- Continuing requires guessing an important design decision.
+Follow `docs/specs/SystemOverview.md`.
 
-The interruption report must include:
+In particular:
 
-- Current progress
-- Blocking issue
-- Affected files or requirements
-- Available options
-- Recommended option
-- Files already modified
+- `Simulator` coordinates modules but does not contain path-planning algorithms.
+- `MapData` owns persistent map state.
+- Coordinate conversion goes through `CoordinateMapper`.
+- `PathPlanner` must not depend on rendering or editor input.
 
-## Work Loop
+## Code Style
 
-For each coding task:
+Prefer straightforward C++.
 
-1. Understand
-   - Confirm the goal and expected behavior.
+Avoid unnecessary cleverness or abstraction.
 
-2. Inspect
-   - Read relevant specifications, tests, and implementation.
+When introducing a non-obvious C++ feature, STL container, or algorithm,
+briefly explain why it is used.
 
-3. Plan
-   - List expected file changes and test method.
-
-4. Implement
-   - Make only the requested changes.
-
-5. Test
-   - Build the project.
-   - Run relevant automated tests.
-   - Perform required manual checks.
-
-6. Fix
-   - Resolve build errors, test failures, and behavior mismatches.
-
-7. Report
-   - Summarize changes and verification results.
-
-Do not stop after only writing code.
-
-A task is complete only when relevant behavior has been verified, unless testing is impossible and the limitation is clearly reported.
-
-## Report Format
+## Report
 
 After each task, report:
 
-1. Summary
-2. Relevant Specifications
-3. Modified Files
-4. Behavior Changes
-5. Test Results
-6. Manual Verification
-7. Notes
+- Modified files
+- What changed
+- Verification result
+- Remaining work
+
+## Repository Handoff
+
+`docs/agent/STATUS.md` is the shared project-state snapshot for ChatGPT,
+Codex, and future development sessions.
+
+Before starting a coding task:
+
+1. Read `docs/agent/STATUS.md`.
+2. Confirm that its current milestone matches the requested task.
+3. Read the relevant specification and implementation.
+
+After completing a task:
+
+1. Update `docs/agent/STATUS.md` to reflect the actual repository state.
+2. Record:
+   - Current milestone
+   - Completed behavior
+   - Verification performed
+   - Known limitations
+   - Next smallest implementation step
+   - Important decisions when relevant
+3. Do not record planned behavior as completed.
+4. Commit the implementation and status update together.
+5. Push the completed commit to the repository.
+
+`STATUS.md` is a current-state snapshot, not a chronological development log.
+Keep it concise and replace stale information.

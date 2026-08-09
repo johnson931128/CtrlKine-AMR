@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 PathResult PathPlanner::plan(const MapData& mapData) {
     PathResult result;
@@ -27,6 +28,38 @@ PathResult PathPlanner::plan(const MapData& mapData) {
     if (isCellBlocked(mapData, *goalCell)) {
         result.message = "Planning failed: goal cell is blocked.";
         return result;
+    }
+
+    [[maybe_unused]] std::set<GridCoord> openSet;
+    [[maybe_unused]] std::map<GridCoord, GridCoord> cameFrom;
+    [[maybe_unused]] std::map<GridCoord, float> gScore;
+    [[maybe_unused]] std::map<GridCoord, float> fScore;
+
+    gScore[*startCell] = 0.0f;
+    fScore[*startCell] = heuristic(*startCell, *goalCell);
+    openSet.insert(*startCell);
+
+    while (!openSet.empty()) {
+        auto currentIt = openSet.begin();
+        for (auto candidateIt = openSet.begin(); candidateIt != openSet.end(); ++candidateIt) {
+            if (fScore.at(*candidateIt) < fScore.at(*currentIt)) {
+                currentIt = candidateIt;
+            }
+        }
+
+        const GridCoord current = *currentIt;
+        openSet.erase(currentIt);
+        ++result.nodesExpanded;
+
+        if (current == *goalCell) {
+            result.path = reconstructPath(cameFrom, current);
+            result.success = true;
+            result.pathLength = static_cast<float>(result.path.size() - 1);
+            result.message = "Path planning succeeded.";
+            return result;
+        }
+
+        // TODO(student): Expand current's neighbors.
     }
 
     // TODO(student):
@@ -127,13 +160,19 @@ std::vector<GridCoord> PathPlanner::reconstructPath(
     // 2. 將回推出來的節點順序反轉，變成 start -> goal。
     // 3. 回傳完整 path，之後 Simulator 才能畫 path polyline。
     std::vector<GridCoord> path;
-    path.push_back(current);
+    GridCoord cursor = current;
 
-    const auto it = cameFrom.find(current);
-    if (it != cameFrom.end()) {
-        path.push_back(it->second);
-        std::reverse(path.begin(), path.end());
+    path.push_back(cursor);
+    while (true) {
+        const auto it = cameFrom.find(cursor);
+        if (it == cameFrom.end()) {
+            break;
+        }
+
+        cursor = it->second;
+        path.push_back(cursor);
     }
 
+    std::reverse(path.begin(), path.end());
     return path;
 }
