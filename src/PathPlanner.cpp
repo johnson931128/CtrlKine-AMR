@@ -30,10 +30,10 @@ PathResult PathPlanner::plan(const MapData& mapData) {
         return result;
     }
 
-    [[maybe_unused]] std::set<GridCoord> openSet;
-    [[maybe_unused]] std::map<GridCoord, GridCoord> cameFrom;
-    [[maybe_unused]] std::map<GridCoord, float> gScore;
-    [[maybe_unused]] std::map<GridCoord, float> fScore;
+    std::set<GridCoord> openSet;
+    std::map<GridCoord, GridCoord> cameFrom;
+    std::map<GridCoord, float> gScore;
+    std::map<GridCoord, float> fScore;
 
     gScore[*startCell] = 0.0f;
     fScore[*startCell] = heuristic(*startCell, *goalCell);
@@ -59,7 +59,18 @@ PathResult PathPlanner::plan(const MapData& mapData) {
             return result;
         }
 
-        // TODO(student): Expand current's neighbors.
+        const float tentativeBaseGScore = gScore.at(current) + 1.0f;
+        for (const GridCoord& neighbor : getNeighbors(mapData, current)) {
+            const auto knownGScore = gScore.find(neighbor);
+            if (knownGScore != gScore.end() && tentativeBaseGScore >= knownGScore->second) {
+                continue;
+            }
+
+            cameFrom[neighbor] = current;
+            gScore[neighbor] = tentativeBaseGScore;
+            fScore[neighbor] = tentativeBaseGScore + heuristic(neighbor, *goalCell);
+            openSet.insert(neighbor);
+        }
     }
 
     // TODO(student):

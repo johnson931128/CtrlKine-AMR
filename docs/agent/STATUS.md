@@ -2,8 +2,9 @@
 
 ## Current milestone
 
-PathPlanner first-version A* skeleton. Goal detection and success-result
-handling are implemented; the search still stops before neighbor expansion.
+PathPlanner first-version A* search. Goal detection, success-result handling,
+neighbor expansion, and score relaxation are implemented; no-path failure
+handling remains.
 
 ## Completed behavior
 
@@ -21,25 +22,27 @@ handling are implemented; the search still stops before neighbor expansion.
 - Extracted cells increment `nodesExpanded`.
 - When the extracted current cell is the goal, the planner returns a success
   result with the reconstructed path and grid-step `pathLength`.
+- Non-goal current cells expand valid four-neighbor cells with unit movement
+  cost.
+- Better or previously unknown routes update `cameFrom`, `gScore`, and
+  `fScore`, and insert the neighbor into `openSet`.
 
 ## Verification
 
-- `mingw32-make all` passed on 2026-08-09.
+- `mingw32-make all` passed on 2026-08-09 after neighbor expansion and score
+  relaxation changes.
 - No dedicated PathPlanner unit tests exist yet.
 
 ## Known limitations
 
-- Neighbor expansion is not called from the search loop.
-- Tentative `gScore` calculation, score relaxation, `cameFrom` updates, and
-  neighbor insertion into `openSet` are not implemented.
 - No-path failure handling is not implemented.
-- The current implementation can therefore complete successfully only when
-  the start and goal resolve to the same traversable cell.
+- When `openSet` is exhausted without reaching the goal, the planner still
+  returns the existing skeleton failure result rather than a dedicated
+  no-path category.
 
 ## Next smallest step
 
-Implement neighbor expansion for the extracted current cell, including
-tentative `gScore` calculation and the approved relaxation/update rules.
+Implement explicit no-path failure handling after `openSet` is exhausted.
 
 ## Important decisions
 
