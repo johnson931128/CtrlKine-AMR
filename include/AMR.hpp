@@ -19,6 +19,7 @@ class AMR {
 public:
     AMR(const AMRConfig& config, sf::Vector2f startPos);
 
+    void setPose(const sf::Vector2f& position, float heading);
     void update(float dt, float vL, float vR);
     bool moveToward(const sf::Vector2f& target, float dt, float maxSpeed, float arrivalTolerance = 0.5f);
     bool moveToward(

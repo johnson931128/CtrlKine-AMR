@@ -20,7 +20,8 @@ TEST_MAP_TARGET = $(TEST_BUILD_DIR)/MapDataTests.exe
 TEST_FILE_TARGET = $(TEST_BUILD_DIR)/MapDataFileTests.exe
 TEST_PATH_TARGET = $(TEST_BUILD_DIR)/PathPlannerTests.exe
 TEST_EXECUTION_TARGET = $(TEST_BUILD_DIR)/PathExecutionTests.exe
-TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET) $(TEST_PATH_TARGET) $(TEST_EXECUTION_TARGET)
+TEST_RUNTIME_TARGET = $(TEST_BUILD_DIR)/SimulatorRuntimeTests.exe
+TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET) $(TEST_PATH_TARGET) $(TEST_EXECUTION_TARGET) $(TEST_RUNTIME_TARGET)
 
 all: $(TARGET)
 
@@ -31,6 +32,7 @@ test: $(TEST_TARGETS)
 	$(TEST_FILE_TARGET) || status=1; \
 	$(TEST_PATH_TARGET) || status=1; \
 	$(TEST_EXECUTION_TARGET) || status=1; \
+	$(TEST_RUNTIME_TARGET) || status=1; \
 	exit $$status
 
 $(TARGET): $(OBJS)
@@ -60,6 +62,10 @@ $(TEST_BUILD_DIR)/PathExecutionTests.o: tests/PathExecutionTests.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
 
+$(TEST_BUILD_DIR)/SimulatorRuntimeTests.o: tests/SimulatorRuntimeTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
 $(TEST_BUILD_DIR)/MapData.o: src/MapData.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -77,6 +83,9 @@ $(TEST_PATH_TARGET): $(TEST_BUILD_DIR)/PathPlannerTests.o $(TEST_BUILD_DIR)/Path
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(TEST_EXECUTION_TARGET): $(TEST_BUILD_DIR)/PathExecutionTests.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/AMR.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(TEST_BUILD_DIR)/PathPlanner.o: src/PathPlanner.cpp

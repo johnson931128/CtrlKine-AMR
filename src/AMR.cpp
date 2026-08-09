@@ -42,6 +42,12 @@ AMR::AMR(const AMRConfig& config, sf::Vector2f startPos)
     m_wheels[3].setPosition(m_position + sf::Vector2f(-halfBase, halfTrack));
 }
 
+void AMR::setPose(const sf::Vector2f& position, float heading) {
+    m_position = position;
+    m_heading = heading;
+    syncShapes();
+}
+
 void AMR::update(float dt, float vL, float vR) {
     const float v = (vL + vR) / 2.0f;
     const float omega = (vL - vR) / m_config.trackWidth;

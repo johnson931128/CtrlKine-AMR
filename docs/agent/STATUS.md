@@ -2,89 +2,94 @@
 
 ## Current milestone
 
-The first navigation-quality milestone is implemented: runtime planning uses
-conservative AMR body clearance, execution removes redundant collinear stops,
-and automatic heading changes are progressive.
+Start Pose and runtime AMR pose semantics are synchronized. Autonomous path
+execution now begins at the configured Start Pose without an implicit approach
+segment.
 
 ## Completed behavior
 
-- Start and Goal placement still uses `MapData`'s approved half-open world
-  boundary. The observed placement cutoff was a visualization issue: the grid
-  extended beyond the editable boundary. Grid rendering is now clipped to the
-  world boundary, and outside clicks do not clear the active route.
-- `PathPlanner::plan(const MapData&)` retains its approved point/cell behavior.
-  Simulator uses a separate clearance-aware overload with the current AMR
-  body's conservative enclosing-circle radius.
-- For the configured 120 by 60 body, the runtime clearance radius is
-  `hypot(60, 30)`, approximately 67.08 world units. Candidate centers are
-  rejected when this circle crosses the half-open world boundary or touches an
-  obstacle cell AABB. Start and Goal poses and their cell centers use the same
-  predicate.
-- Inflated occupancy is derived during planning. Persistent obstacles and map
-  files remain unchanged.
-- `PathResult.path` remains the complete raw four-neighbor A* path.
-  `PathExecution` derives a separate execution waypoint sequence by removing
-  only intermediate points whose adjacent raw steps are identical unit-cardinal
-  directions. Start, Goal, corners, and irregular path segments are preserved.
-- Automatic following uses bounded angular change through the differential-
-  drive update. Sharp turns rotate in place before translation; aligned motion
-  remains frame-time based and clamps the final step. Collision rollback still
-  occurs before waypoint advancement. Manual controls are unchanged whenever
-  the path is not following.
+- `MapData` remains the authoritative owner of configured Start and Goal poses.
+- Creating, replacing, or rotating Start through the editor immediately applies
+  its world position and heading to the AMR. Loading a map with Start also
+  applies that pose.
+- Planning reapplies configured Start before validation and A* so manual runtime
+  movement cannot leave execution starting from a stale AMR pose.
+- Every Start synchronization clears `PathExecution`, resets waypoint progress,
+  clears path visualization, and refreshes validation. Changing Start therefore
+  requires a new planning request.
+- `AMR::setPose()` updates runtime position and heading and synchronizes body and
+  wheel render shapes. Collision geometry queries use the same pose.
+- Ctrl+R resets to configured Start position and heading when Start exists.
+  Without Start it retains the previous default `(400, 400)` position and zero
+  heading. Reset preserves map configuration and clears execution and route
+  visualization.
+- Start remains stored at its exact configured world position. On the first
+  execution update only, an AMR already in the raw path's Start cell is accepted
+  as having reached waypoint zero without calling `moveToward()`. The existing
+  collision gate still runs before waypoint advancement. Later waypoints retain
+  exact center-target behavior.
+- `PathResult.path`, collinear execution-waypoint compression, clearance-aware
+  planning, progressive turning, and completion behavior are unchanged.
 
 ## Ownership decisions
 
-- `PathPlanner` owns A* and the single clearance-aware traversability predicate;
-  it receives a world-unit radius and does not depend on AMR or rendering.
-- `AMR` owns its geometry and exposes the conservative body radius plus the
-  progressive world-target movement primitive.
-- `PathExecution` owns derived transient execution waypoints while retaining
-  the authoritative raw `PathResult`.
-- Simulator coordinates geometry, planning, execution, rendering, input, and
-  collision acceptance. `MapData` remains the authoritative persistent map.
+- Simulator owns the synchronization, reset policy, initial-waypoint acceptance,
+  route invalidation, visualization clearing, and validation refresh.
+- AMR only owns and applies its runtime pose and geometry synchronization.
+- PathPlanner still reads Start from `MapData`; no planner behavior or raw path
+  semantics changed.
+- PathExecution remains responsible only for transient path state and waypoint
+  progress; no AMR or coordinate-mapping dependency was added.
 
 ## Verification
 
-- Clean `mingw32-make all` passed on 2026-08-09.
-- Clean `mingw32-make test` passed all five suites: 70 PASS, 0 FAIL.
+- Clean `mingw32-make clean`, `mingw32-make all`, and `mingw32-make test`
+  passed on 2026-08-09.
+- All six test executables were also run directly and passed.
 - `CoordinateMapperTests.exe`: 6 PASS, 0 FAIL.
 - `MapDataTests.exe`: 16 PASS, 0 FAIL.
 - `MapDataFileTests.exe`: 15 PASS, 0 FAIL.
 - `PathPlannerTests.exe`: 14 PASS, 0 FAIL.
 - `PathExecutionTests.exe`: 19 PASS, 0 FAIL.
-- Each test executable was also run directly and passed.
-- The desktop executable launched and created an SFML window. The available UI
-  automation could not reliably enumerate or attach to that window, so
-  placement, clearance, motion, and replanning are not claimed as visually
-  verified.
+- `SimulatorRuntimeTests.exe`: 9 PASS, 0 FAIL.
+- Total automated result: 79 PASS, 0 FAIL. The previous 70-test baseline is
+  preserved.
+- The desktop executable launched. The available Windows automation failed to
+  enumerate or attach to the SFML window (`0x80070003`), so Start placement,
+  heading rotation, route clearing, reset, and motion are not claimed as
+  visually verified.
 
 ## Known limitations
 
-- The enclosing-circle footprint is deliberately conservative and can reject a
-  passage that the rectangular body could traverse at a particular heading.
-  Wheels are not included because current runtime collision semantics use the
+- The enclosing-circle footprint remains deliberately conservative and can
+  reject a passage that the rectangular body could traverse at a particular
+  heading. Wheels are not included because runtime collision semantics use the
   body only.
 - Only collinear execution points are compressed. There is no line-of-sight
   shortcutting, spline generation, or curvature optimization.
-- Automatic motion is deterministic stop-turn-go control, not a continuous-
-  curvature trajectory. Goal-pose heading is not executed.
-- The current AMR pose still approaches the first Start-cell waypoint without a
-  planned approach segment.
+- Automatic motion remains deterministic stop-turn-go control. Goal-pose
+  heading is not executed.
 - Runtime collision acceptance samples the body's current corners and has no
   swept-volume test, so very large frame times can still tunnel.
 - The Makefile does not track header dependencies; header changes require a
   clean rebuild.
+- The exact interactive reproduction still needs a human-observed desktop pass
+  because window automation could not capture this SFML window.
 
 ## Next smallest step
 
-Perform an interactive desktop acceptance pass covering boundary visualization,
-wall/corner clearance, narrow-passage rejection, progressive turning, route
-completion, and replanning. Address only a reproduced failure from that pass.
+Perform the exact desktop acceptance scenario for Start placement across an
+obstacle wall, then verify Start replacement, Start heading rotation, Ctrl+R,
+route completion, progressive turning, and footprint clearance. Address only a
+reproduced failure from that pass.
 
 ## Important decisions
 
-- The approved one-argument planner API remains unchanged; footprint-aware
-  planning is an explicit overload used by Simulator.
-- Obstacle inflation is never persisted. The physical map remains authoritative.
-- Collinear simplification is execution-only because it preserves the exact raw
-  path geometry without introducing a second safety predicate.
+- Start synchronization occurs immediately on editor mutation and again before
+  planning to recover from intervening manual AMR movement.
+- An off-center Start is not snapped to the grid-cell center. Only waypoint zero
+  uses same-cell acceptance, preventing a residual approach-to-center segment
+  without weakening later corner-waypoint behavior.
+- Successful map load follows the same configured-Start semantics as editor
+  placement. Map clear or Start deletion does not teleport the AMR; Ctrl+R uses
+  the default pose when no Start exists.

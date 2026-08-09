@@ -10,6 +10,8 @@
 #include "PathExecution.hpp"
 #include "SelectedObject.hpp"
 
+struct SimulatorRuntimeTestAccess;
+
 class Simulator {
 public:
 /* Simulator lifecycle */
@@ -47,6 +49,7 @@ void loadMap();
 void clearMap();
 void resetView();
 void resetRobotPose();
+bool synchronizeRobotToStartPose();
 
 /* Validation and path planning */
 void updateValidationResult(bool updateStatusMessage = false);
@@ -60,6 +63,26 @@ void clearSelection();
 bool deleteSelectedObject();
 bool rotateSelectedHeading(float deltaRadians);
 void syncSelectionToEnvironment();
+
+/* Headless runtime integration seams */
+static bool applyConfiguredStartPose(
+    const MapData& mapData,
+    AMR& amr,
+    PathExecution& pathExecution
+);
+static void applyRobotReset(
+    const MapData& mapData,
+    const sf::Vector2f& defaultPosition,
+    AMR& amr,
+    PathExecution& pathExecution
+);
+static bool isRobotAtInitialWaypoint(
+    const MapData& mapData,
+    const AMR& amr,
+    const PathExecution& pathExecution
+);
+
+friend struct SimulatorRuntimeTestAccess;
 
 /* Main window and rendering views */
 sf::RenderWindow m_window;

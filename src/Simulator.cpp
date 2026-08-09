@@ -254,9 +254,11 @@ void Simulator::saveMap() {
 
 void Simulator::loadMap() {
     if (m_env.loadMapFromFile(m_mapFilename)) {
-        clearPathExecution();
         clearSelection();
-        updateValidationResult();
+        if (!synchronizeRobotToStartPose()) {
+            clearPathExecution();
+            updateValidationResult();
+        }
         m_statusMessage = "Loaded map from " + m_mapFilename;
     } else {
         m_statusMessage = "Failed to load map";
@@ -279,10 +281,69 @@ void Simulator::resetView() {
 }
 
 void Simulator::resetRobotPose() {
-    m_amr = AMR(m_amrConfig, m_defaultRobotPosition);
-    clearPathExecution();
+    applyRobotReset(
+        m_env.getMapData(),
+        m_defaultRobotPosition,
+        m_amr,
+        m_pathExecution
+    );
+    m_pathVertices.clear();
     updateValidationResult();
     m_statusMessage = "Reset robot pose";
+}
+
+bool Simulator::synchronizeRobotToStartPose() {
+    if (!applyConfiguredStartPose(m_env.getMapData(), m_amr, m_pathExecution)) {
+        return false;
+    }
+
+    m_pathVertices.clear();
+    updateValidationResult();
+    return true;
+}
+
+bool Simulator::applyConfiguredStartPose(
+    const MapData& mapData,
+    AMR& amr,
+    PathExecution& pathExecution
+) {
+    const std::optional<Pose2D>& startPose = mapData.getRobotStartPose();
+    if (!startPose.has_value()) {
+        return false;
+    }
+
+    amr.setPose(startPose->position, startPose->heading);
+    pathExecution.clear();
+    return true;
+}
+
+void Simulator::applyRobotReset(
+    const MapData& mapData,
+    const sf::Vector2f& defaultPosition,
+    AMR& amr,
+    PathExecution& pathExecution
+) {
+    const std::optional<Pose2D>& startPose = mapData.getRobotStartPose();
+    if (startPose.has_value()) {
+        amr.setPose(startPose->position, startPose->heading);
+    } else {
+        amr.setPose(defaultPosition, 0.0f);
+    }
+    pathExecution.clear();
+}
+
+bool Simulator::isRobotAtInitialWaypoint(
+    const MapData& mapData,
+    const AMR& amr,
+    const PathExecution& pathExecution
+) {
+    if (pathExecution.getCurrentWaypointIndex() != 0) {
+        return false;
+    }
+
+    const std::optional<GridCoord> waypoint = pathExecution.getCurrentWaypoint();
+    return waypoint.has_value()
+        && mapData.getMapper().worldToGrid(amr.getPosition()) == *waypoint;
 }
 
 void Simulator::updateValidationResult(bool updateStatusMessage) {
@@ -295,6 +356,8 @@ void Simulator::updateValidationResult(bool updateStatusMessage) {
 
 void Simulator::runPathPlanning() {
     PathResult result;
+
+    synchronizeRobotToStartPose();
 
     if (m_validationResult.status == ValidationStatus::Error) {
         result.message = "Planning blocked: fix map validation errors first.";
@@ -490,7 +553,11 @@ bool Simulator::rotateSelectedHeading(float deltaRadians) {
         return false;
     }
 
-    return m_env.rotateSelectedHeading(m_selectedObject, deltaRadians);
+    const bool rotated = m_env.rotateSelectedHeading(m_selectedObject, deltaRadians);
+    if (rotated && m_selectedObject.type == SelectedObjectType::StartPose) {
+        synchronizeRobotToStartPose();
+    }
+    return rotated;
 }
 
 void Simulator::syncSelectionToEnvironment() {
@@ -593,9 +660,14 @@ void Simulator::processEvents() {
                     if (!m_env.isInsideWorldBounds(worldPos)) {
                         continue;
                     }
-                    clearPathExecution();
+                    const EditorMode editorMode = m_env.getEditorMode();
                     m_env.handleLeftMousePressed(worldPos);
-                    updateValidationResult();
+                    if (editorMode == EditorMode::SetStartPose) {
+                        synchronizeRobotToStartPose();
+                    } else {
+                        clearPathExecution();
+                        updateValidationResult();
+                    }
                 }
             }
         }
@@ -644,14 +716,18 @@ void Simulator::update(float dt) {
     if (wasFollowing) {
         const std::optional<GridCoord> waypoint = m_pathExecution.getCurrentWaypoint();
         if (waypoint.has_value()) {
-            const sf::Vector2f target = m_env.getMapData().getMapper().gridToWorldCenter(*waypoint);
-            reachedWaypoint = m_amr.moveToward(
-                target,
-                dt,
-                maxSpeed,
-                maxAutomaticAngularSpeed,
-                0.5f
-            );
+            if (isRobotAtInitialWaypoint(m_env.getMapData(), m_amr, m_pathExecution)) {
+                reachedWaypoint = true;
+            } else {
+                const sf::Vector2f target = m_env.getMapData().getMapper().gridToWorldCenter(*waypoint);
+                reachedWaypoint = m_amr.moveToward(
+                    target,
+                    dt,
+                    maxSpeed,
+                    maxAutomaticAngularSpeed,
+                    0.5f
+                );
+            }
         }
     } else {
         float linearSpeed = 0.0f;
