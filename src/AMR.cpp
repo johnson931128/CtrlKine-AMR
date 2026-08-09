@@ -1,5 +1,7 @@
 #include "AMR.hpp"
 
+#include <algorithm>
+
 AMR::AMR(const AMRConfig& config, sf::Vector2f startPos)
     : m_config(config), m_position(startPos), m_heading(0.0f) {
     m_bodyShape.setSize(sf::Vector2f(m_config.bodyLength, m_config.bodyWidth));
@@ -33,6 +35,38 @@ void AMR::update(float dt, float vL, float vR) {
     m_position.x += v * std::cos(m_heading) * dt;
     m_position.y += v * std::sin(m_heading) * dt;
 
+    syncShapes();
+}
+
+bool AMR::moveToward(const sf::Vector2f& target, float dt, float maxSpeed, float arrivalTolerance) {
+    const sf::Vector2f delta = target - m_position;
+    const float distance = std::sqrt((delta.x * delta.x) + (delta.y * delta.y));
+    const float safeTolerance = std::max(0.0f, arrivalTolerance);
+
+    if (distance <= safeTolerance) {
+        m_position = target;
+        syncShapes();
+        return true;
+    }
+
+    if (dt <= 0.0f || maxSpeed <= 0.0f) {
+        return false;
+    }
+
+    m_heading = std::atan2(delta.y, delta.x);
+    const float step = std::min(maxSpeed * dt, distance);
+    m_position += delta * (step / distance);
+
+    const bool reached = distance - step <= safeTolerance;
+    if (reached) {
+        m_position = target;
+    }
+
+    syncShapes();
+    return reached;
+}
+
+void AMR::syncShapes() {
     m_bodyShape.setPosition(m_position);
     m_bodyShape.setRotation(sf::radians(m_heading));
 

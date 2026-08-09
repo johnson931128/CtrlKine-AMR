@@ -20,6 +20,7 @@ public:
     AMR(const AMRConfig& config, sf::Vector2f startPos);
 
     void update(float dt, float vL, float vR);
+    bool moveToward(const sf::Vector2f& target, float dt, float maxSpeed, float arrivalTolerance = 0.5f);
     void draw(sf::RenderWindow& window);
 
     sf::Vector2f getPosition() const { return m_position; }
@@ -28,6 +29,8 @@ public:
     bool containsPoint(const sf::Vector2f& worldPos) const;
 
 private:
+    void syncShapes();
+
     AMRConfig m_config;
     sf::Vector2f m_position;
     float m_heading;

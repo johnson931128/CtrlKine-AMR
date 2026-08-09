@@ -7,7 +7,7 @@
 #include "AMR.hpp"
 #include "Environment.hpp"
 #include "MapValidator.hpp"
-#include "PathPlanner.hpp"
+#include "PathExecution.hpp"
 #include "SelectedObject.hpp"
 
 class Simulator {
@@ -32,6 +32,7 @@ bool handleToolbarClick(const sf::Vector2i& pixelPos);
 /* UI rendering */
 void drawToolbar();
 void drawInspector();
+void drawActivePath();
 
 /* UI layout and viewport management */
 void updateCursorPreview();
@@ -50,6 +51,8 @@ void resetRobotPose();
 /* Validation and path planning */
 void updateValidationResult(bool updateStatusMessage = false);
 void runPathPlanning();
+void clearPathExecution();
+void rebuildPathVisualization();
 
 /* Object selection and editing */
 void selectObjectAt(const sf::Vector2f& worldPos);
@@ -101,6 +104,7 @@ SelectedObject m_selectedObject;
 
 /* Validation and path-planning results */
 ValidationResult m_validationResult;
-PathResult m_pathResult;
+PathExecution m_pathExecution;
+sf::VertexArray m_pathVertices;
 
 };

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -23,6 +24,19 @@ constexpr float kInspectorSectionGap = 18.0f;
 constexpr float kInspectorTitleGap = 10.0f;
 constexpr float kInspectorScrollStep = 48.0f;
 const sf::Vector2f kDefaultRobotPosition(400.0f, 400.0f);
+const sf::Color kPathColor(30, 144, 255, 220);
+
+std::string toPathExecutionLabel(PathExecutionState state) {
+    switch (state) {
+    case PathExecutionState::Following:
+        return "following";
+    case PathExecutionState::Completed:
+        return "completed";
+    case PathExecutionState::NotFollowing:
+    default:
+        return "not following";
+    }
+}
 
 bool loadUiFont(sf::Font& font) {
     const std::array<const char*, 4> fontPaths = {
@@ -153,7 +167,10 @@ Simulator::Simulator()
     );
     updateWindowLayout();
 
-    m_pathResult.message = "Path planning has not run yet.";
+    m_pathVertices.setPrimitiveType(sf::PrimitiveType::LineStrip);
+    PathResult initialPathResult;
+    initialPathResult.message = "Path planning has not run yet.";
+    m_pathExecution.install(std::move(initialPathResult));
     updateValidationResult();
 }
 
@@ -237,6 +254,7 @@ void Simulator::saveMap() {
 
 void Simulator::loadMap() {
     if (m_env.loadMapFromFile(m_mapFilename)) {
+        clearPathExecution();
         clearSelection();
         updateValidationResult();
         m_statusMessage = "Loaded map from " + m_mapFilename;
@@ -247,6 +265,7 @@ void Simulator::loadMap() {
 
 void Simulator::clearMap() {
     m_env.clearMap();
+    clearPathExecution();
     clearSelection();
     updateValidationResult();
     m_statusMessage = "Cleared map";
@@ -261,6 +280,7 @@ void Simulator::resetView() {
 
 void Simulator::resetRobotPose() {
     m_amr = AMR(m_amrConfig, m_defaultRobotPosition);
+    clearPathExecution();
     updateValidationResult();
     m_statusMessage = "Reset robot pose";
 }
@@ -274,15 +294,37 @@ void Simulator::updateValidationResult(bool updateStatusMessage) {
 }
 
 void Simulator::runPathPlanning() {
+    PathResult result;
+
     if (m_validationResult.status == ValidationStatus::Error) {
-        m_pathResult = PathResult{};
-        m_pathResult.message = "Planning blocked: fix map validation errors first.";
+        result.message = "Planning blocked: fix map validation errors first.";
+        m_pathExecution.install(std::move(result));
+        rebuildPathVisualization();
         m_statusMessage = "Planning blocked";
         return;
     }
 
-    m_pathResult = PathPlanner::plan(m_env.getMapData());
-    m_statusMessage = m_pathResult.message;
+    result = PathPlanner::plan(m_env.getMapData());
+    m_pathExecution.install(std::move(result));
+    rebuildPathVisualization();
+    m_statusMessage = m_pathExecution.getResult().message;
+}
+
+void Simulator::clearPathExecution() {
+    m_pathExecution.clear();
+    m_pathVertices.clear();
+}
+
+void Simulator::rebuildPathVisualization() {
+    m_pathVertices.clear();
+    if (!m_pathExecution.hasExecutablePath()) {
+        return;
+    }
+
+    const CoordinateMapper& mapper = m_env.getMapData().getMapper();
+    for (const GridCoord& cell : m_pathExecution.getResult().path) {
+        m_pathVertices.append(sf::Vertex{mapper.gridToWorldCenter(cell), kPathColor});
+    }
 }
 
 void Simulator::handleEditorHotkeys(const sf::Event& event) {
@@ -431,6 +473,7 @@ bool Simulator::deleteSelectedObject() {
 
     const bool deleted = m_env.deleteSelectedObject(m_selectedObject);
     if (deleted) {
+        clearPathExecution();
         clearSelection();
         updateValidationResult();
     }
@@ -535,6 +578,7 @@ void Simulator::processEvents() {
                 } else if (m_env.getEditorMode() == EditorMode::DeleteObstacle) {
                     SelectedObject deletedObject = SelectedObject::none();
                     if (m_env.deleteObjectAt(worldPos, &deletedObject)) {
+                        clearPathExecution();
                         if (m_selectedObject.type == deletedObject.type
                             && m_selectedObject.obstacleCoord == deletedObject.obstacleCoord
                             && m_selectedObject.workZoneIndex == deletedObject.workZoneIndex) {
@@ -546,6 +590,7 @@ void Simulator::processEvents() {
                         m_statusMessage = "Deleted object";
                     }
                 } else {
+                    clearPathExecution();
                     m_env.handleLeftMousePressed(worldPos);
                     updateValidationResult();
                 }
@@ -581,23 +626,34 @@ void Simulator::processEvents() {
 }
 
 void Simulator::update(float dt) {
-    float linearSpeed = 0.0f;
-    float turnSpeed = 0.0f;
     const float maxSpeed = 150.0f;
     const float turnRate = 100.0f;
-
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) linearSpeed = maxSpeed;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) linearSpeed = -maxSpeed;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) turnSpeed = -turnRate;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) turnSpeed = turnRate;
-
-    const float vL = linearSpeed + turnSpeed;
-    const float vR = linearSpeed - turnSpeed;
 
     AMR backupAmr = m_amr;
     const sf::Vector2f previousPosition = m_amr.getPosition();
     const float previousHeading = m_amr.getHeading();
-    m_amr.update(dt, vL, vR);
+    const bool wasFollowing = m_pathExecution.getState() == PathExecutionState::Following;
+    bool reachedWaypoint = false;
+
+    if (wasFollowing) {
+        const std::optional<GridCoord> waypoint = m_pathExecution.getCurrentWaypoint();
+        if (waypoint.has_value()) {
+            const sf::Vector2f target = m_env.getMapData().getMapper().gridToWorldCenter(*waypoint);
+            reachedWaypoint = m_amr.moveToward(target, dt, maxSpeed);
+        }
+    } else {
+        float linearSpeed = 0.0f;
+        float turnSpeed = 0.0f;
+
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) linearSpeed = maxSpeed;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) linearSpeed = -maxSpeed;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) turnSpeed = -turnRate;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) turnSpeed = turnRate;
+
+        const float vL = linearSpeed + turnSpeed;
+        const float vR = linearSpeed - turnSpeed;
+        m_amr.update(dt, vL, vR);
+    }
 
     const std::vector<sf::Vector2f> corners = m_amr.getCorners();
 
@@ -611,6 +667,11 @@ void Simulator::update(float dt) {
 
     if (collision) {
         m_amr = backupAmr;
+    } else if (wasFollowing && reachedWaypoint) {
+        m_pathExecution.advanceWaypoint();
+        if (m_pathExecution.getState() == PathExecutionState::Completed) {
+            m_statusMessage = "Path following completed.";
+        }
     }
 
     const sf::Vector2f currentPosition = m_amr.getPosition();
@@ -626,6 +687,7 @@ void Simulator::render() {
 
     m_window.setView(m_simView);
     m_env.draw(m_window, m_simView);
+    drawActivePath();
     m_amr.draw(m_window);
 
     if (m_selectedObject.type == SelectedObjectType::Robot) {
@@ -643,6 +705,26 @@ void Simulator::render() {
     drawInspector();
 
     m_window.display();
+}
+
+void Simulator::drawActivePath() {
+    if (!m_pathExecution.hasExecutablePath()) {
+        return;
+    }
+
+    if (m_pathVertices.getVertexCount() > 1) {
+        m_window.draw(m_pathVertices);
+    }
+
+    sf::CircleShape waypointMarker(4.0f);
+    waypointMarker.setOrigin(sf::Vector2f(4.0f, 4.0f));
+    waypointMarker.setFillColor(kPathColor);
+
+    const CoordinateMapper& mapper = m_env.getMapData().getMapper();
+    for (const GridCoord& cell : m_pathExecution.getResult().path) {
+        waypointMarker.setPosition(mapper.gridToWorldCenter(cell));
+        m_window.draw(waypointMarker);
+    }
 }
 
 void Simulator::drawToolbar() {
@@ -769,11 +851,14 @@ void Simulator::drawInspector() {
     }
     drawSection("Map Validation", validationInfo.str(), getValidationColor(m_validationResult.status));
 
+    const PathResult& pathResult = m_pathExecution.getResult();
     std::ostringstream planningInfo;
-    planningInfo << "Success: " << (m_pathResult.success ? "yes" : "no") << "\n"
-                 << "Nodes: " << m_pathResult.nodesExpanded << "\n"
-                 << "Length: " << static_cast<int>(m_pathResult.pathLength) << "\n"
-                 << "Message: " << m_pathResult.message;
+    planningInfo << "Success: " << (pathResult.success ? "yes" : "no") << "\n"
+                 << "Nodes: " << pathResult.nodesExpanded << "\n"
+                 << "Length: " << static_cast<int>(pathResult.pathLength) << "\n"
+                 << "Waypoints: " << pathResult.path.size() << "\n"
+                 << "Execution: " << toPathExecutionLabel(m_pathExecution.getState()) << "\n"
+                 << "Message: " << pathResult.message;
     drawSection("Path Planning", planningInfo.str(), sf::Color(75, 75, 75));
 
     std::ostringstream selectedInfo;
@@ -833,7 +918,10 @@ void Simulator::drawInspector() {
     robotInfo << "Position: (" << static_cast<int>(robotPos.x) << ", "
               << static_cast<int>(robotPos.y) << ")\n"
               << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg\n"
-              << "Mode: manual";
+              << "Mode: "
+              << (m_pathExecution.getState() == PathExecutionState::NotFollowing
+                  ? "manual"
+                  : toPathExecutionLabel(m_pathExecution.getState()));
     drawSection("Robot State", robotInfo.str(), sf::Color(75, 75, 75));
 
     std::ostringstream controlsInfo;
