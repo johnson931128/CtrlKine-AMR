@@ -10,10 +10,10 @@ public:
     void expect(bool condition, const std::string& requirement, const std::string& detail) {
         if (condition) {
             ++m_passed;
-            std::cout << "PASS [" << requirement << "] " << detail << "\n";
+            std::cout << "PASS [" << requirement << "] " << detail << "\n" << std::flush;
         } else {
             ++m_failed;
-            std::cout << "FAIL [" << requirement << "] " << detail << "\n";
+            std::cout << "FAIL [" << requirement << "] " << detail << "\n" << std::flush;
         }
     }
 

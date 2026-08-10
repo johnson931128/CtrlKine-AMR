@@ -9,6 +9,7 @@ public:
     explicit OdometrySimulator(const OdometryConfig& config = OdometryConfig{});
 
     void reset(const Pose2D& groundTruthPose);
+    void rebaseGroundTruthReference(const Pose2D& groundTruthPose);
     OdometryDelta observe(const Pose2D& currentGroundTruthPose, std::mt19937& randomEngine);
 
     bool isInitialized() const;

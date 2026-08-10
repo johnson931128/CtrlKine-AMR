@@ -9,6 +9,8 @@
 #include "AmclLocalizer.hpp"
 #include "Environment.hpp"
 #include "LidarSimulator.hpp"
+#include "LocalizationConfig.hpp"
+#include "LocalizationVisualization.hpp"
 #include "MapLikelihoodField.hpp"
 #include "MapValidator.hpp"
 #include "OdometrySimulator.hpp"
@@ -16,6 +18,11 @@
 #include "SelectedObject.hpp"
 
 struct SimulatorRuntimeTestAccess;
+
+enum class NavigationMode {
+    SimulationTruth,
+    LocalizationDriven
+};
 
 class Simulator {
 public:
@@ -31,6 +38,7 @@ void render();
 
 /* Configuration loading */
 void loadConfig(const std::string& filename);
+void loadLocalizationConfig(const std::string& filename);
 
 /* Input and editor event handling */
 void handleEditorHotkeys(const sf::Event& event);
@@ -39,6 +47,7 @@ bool handleToolbarClick(const sf::Vector2i& pixelPos);
 /* UI rendering */
 void drawToolbar();
 void drawInspector();
+void drawLocalizationLegend();
 void drawActivePath();
 void drawLocalization();
 void drawLidarScan();
@@ -58,6 +67,9 @@ void resetView();
 void resetRobotPose();
 bool synchronizeRobotToStartPose();
 void resetLocalizationForCurrentPose(bool initializeFromStart);
+void resetLocalizationOnly();
+void globalLocalization();
+void runKidnapTest();
 void updateLocalization();
 void rebuildLocalizationVisualization();
 
@@ -90,6 +102,26 @@ static bool isRobotAtInitialWaypoint(
     const MapData& mapData,
     const AMR& amr,
     const PathExecution& pathExecution
+);
+static bool isObservedPoseAtInitialWaypoint(
+    const MapData& mapData,
+    const Pose2D& observedPose,
+    const PathExecution& pathExecution
+);
+static bool localizationPassesNavigationGate(
+    const LocalizationEstimate& estimate,
+    const LocalizationStatistics& statistics,
+    const AmclConfig& config,
+    std::string& reason
+);
+static bool applyLocalizationDrivenCommand(
+    const Pose2D& observedPose,
+    const sf::Vector2f& target,
+    float dt,
+    float maxSpeed,
+    float maxAngularSpeed,
+    float trackWidth,
+    AMR& amr
 );
 static OdometryDelta observeAcceptedMotion(
     const Pose2D& acceptedPose,
@@ -138,6 +170,10 @@ AmclLocalizer m_localizer;
 LaserScan m_currentScan;
 Pose2D m_scanGroundTruthPose;
 sf::VertexArray m_particleVertices;
+LocalizationViewOptions m_localizationView;
+bool m_kidnapTestActive = false;
+NavigationMode m_navigationMode = NavigationMode::SimulationTruth;
+std::string m_planningStartSource = "Map Start";
 
 /* Timing and camera interaction state */
 sf::Clock m_clock;

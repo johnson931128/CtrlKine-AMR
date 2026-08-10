@@ -1,7 +1,9 @@
 #include "LidarSimulator.hpp"
 #include "MapLikelihoodField.hpp"
 #include "OdometrySimulator.hpp"
+#include "LocalizationVisualization.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <stdexcept>
@@ -196,6 +198,97 @@ int main() {
             && field.distanceAt(sf::Vector2f(125.0f, 125.0f)) > 0.0;
     });
 
+    runTest(suite, "FIELD-007", "diagonal query matches exact obstacle-corner distance", [] {
+        MapData map = makeMap();
+        map.addObstacle(GridCoord{2, 2});
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        return near(
+            field.distanceAt(sf::Vector2f(75.0f, 75.0f)),
+            std::hypot(25.0, 25.0),
+            0.001
+        );
+    });
+
+    runTest(suite, "FIELD-008", "field exposes free, occupied, and outside point semantics", [] {
+        MapData map(50.0f);
+        map.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f), sf::Vector2f(300.0f, 300.0f)
+        ));
+        map.addObstacle(GridCoord{2, 2});
+        MapLikelihoodField field;
+        field.rebuild(map, 100.0);
+        return field.isFree(sf::Vector2f(25.0f, 25.0f))
+            && !field.isFree(sf::Vector2f(125.0f, 125.0f))
+            && !field.isFree(sf::Vector2f(-1.0f, 25.0f));
+    });
+
+    runTest(suite, "LIDAR-009", "max-range no-return remains saturated under noise", [] {
+        MapData map = makeMap();
+        LidarConfig config = singleBeamConfig(100.0);
+        config.rangeNoiseStdDev = 20.0;
+        LidarSimulator lidar(config);
+        std::mt19937 randomEngine(123);
+        const LaserScan scan = lidar.simulate(
+            Pose2D{sf::Vector2f(250.0f, 250.0f), 0.0f}, map, randomEngine
+        );
+        return near(scan.ranges.front(), 100.0);
+    });
+
+    runTest(suite, "LIDAR-010", "nonzero sensor translation and yaw extrinsics affect scan geometry", [] {
+        MapData map = makeMap();
+        map.addObstacle(GridCoord{2, 3});
+        LidarConfig config = singleBeamConfig();
+        config.offsetX = 25.0;
+        config.yawOffset = kLocalizationPi / 2.0;
+        LidarSimulator lidar(config);
+        std::mt19937 randomEngine(4);
+        const LaserScan scan = lidar.simulate(
+            Pose2D{sf::Vector2f(125.0f, 25.0f), 0.0f}, map, randomEngine
+        );
+        return near(scan.ranges.front(), 125.0)
+            && near(scan.sensorOffsetX, 25.0)
+            && near(scan.sensorYawOffset, kLocalizationPi / 2.0);
+    });
+
+    runTest(suite, "LIDAR-011", "extrinsic origin outside the map yields a safe invalid scan", [] {
+        MapData map(50.0f);
+        map.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f), sf::Vector2f(500.0f, 500.0f)
+        ));
+        LidarConfig config;
+        config.beamCount = 9;
+        config.fieldOfView = kLocalizationPi;
+        config.minRange = 1.0;
+        config.maxRange = 200.0;
+        config.offsetX = -40.0;
+        config.rangeNoiseStdDev = 0.0;
+        std::mt19937 engine(1234);
+        const LaserScan scan = LidarSimulator(config).simulate(
+            Pose2D{sf::Vector2f(20.0f, 250.0f), 0.0f}, map, engine
+        );
+        return scan.ranges.size() == config.beamCount
+            && std::all_of(scan.ranges.begin(), scan.ranges.end(), [](float range) {
+                return std::isnan(range);
+            });
+    });
+
+    runTest(suite, "COV-001", "covariance ellipse uses stable eigen decomposition", [] {
+        LocalizationCovariance covariance;
+        covariance.values[0] = 100.0;
+        covariance.values[4] = 25.0;
+        const CovarianceEllipse ellipse = covarianceEllipse(covariance, 2.0);
+        return ellipse.valid && near(ellipse.majorRadius, 20.0)
+            && near(ellipse.minorRadius, 10.0) && near(ellipse.rotation, 0.0);
+    });
+
+    runTest(suite, "VIS-001", "default localization view is readable and inference-neutral", [] {
+        const LocalizationViewOptions view;
+        return view.particles && view.estimate && view.covariance
+            && !view.lidarRays && !view.lidarHitPoints && !view.odometry
+            && view.renderedRayCount < LidarConfig{}.beamCount;
+    });
+
     runTest(suite, "ODOM-001", "zero accepted motion remains exactly stable", [] {
         OdometrySimulator simulator;
         const Pose2D pose{sf::Vector2f(100.0f, 100.0f), 0.4f};
@@ -265,6 +358,26 @@ int main() {
         return near(firstDelta.rotation1, secondDelta.rotation1, 1e-12)
             && near(firstDelta.translation, secondDelta.translation, 1e-12)
             && near(firstDelta.rotation2, secondDelta.rotation2, 1e-12);
+    });
+
+    runTest(suite, "ODOM-005", "kidnap rebase preserves odometry belief and hides teleport delta", [] {
+        OdometryConfig config{};
+        config.translationStdDevPerDistance = 0.0;
+        config.translationStdDevPerRotation = 0.0;
+        config.rotationStdDevPerRotation = 0.0;
+        config.rotationStdDevPerDistance = 0.0;
+        OdometrySimulator simulator(config);
+        const Pose2D poseA{sf::Vector2f(100.0f, 100.0f), 0.2f};
+        const Pose2D poseB{sf::Vector2f(400.0f, 350.0f), -0.8f};
+        simulator.reset(poseA);
+        simulator.rebaseGroundTruthReference(poseB);
+        std::mt19937 engine(55);
+        const OdometryDelta delta = simulator.observe(poseB, engine);
+        return near(delta.translation, 0.0) && near(delta.rotation1, 0.0)
+            && near(delta.rotation2, 0.0)
+            && near(simulator.getOdometryPose().position.x, poseA.position.x)
+            && near(simulator.getOdometryPose().position.y, poseA.position.y)
+            && near(simulator.getOdometryPose().heading, poseA.heading);
     });
 
     return suite.exitCode();

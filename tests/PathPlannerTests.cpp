@@ -199,5 +199,32 @@ int main() {
             && isExplicitFailure(nonFinite, "clearance", true);
     });
 
+    runTest(suite, "PP-EXPLICIT-001", "explicit start plans without mutating persistent Start", [] {
+        MapData map = makeMap(8, 4);
+        const Pose2D persistentStart{map.getMapper().gridToWorldCenter(GridCoord{0, 1}), 0.4f};
+        const Pose2D explicitStart{map.getMapper().gridToWorldCenter(GridCoord{2, 1}), -0.2f};
+        const Pose2D goal{map.getMapper().gridToWorldCenter(GridCoord{6, 1}), 0.0f};
+        map.setRobotStartPose(persistentStart);
+        map.setRobotGoalPose(goal);
+        const PathResult result = PathPlanner::plan(map, explicitStart, goal, 0.0f);
+        return result.success && result.path.front() == GridCoord{2, 1}
+            && map.getRobotStartPose()->position == persistentStart.position
+            && map.getRobotStartPose()->heading == persistentStart.heading;
+    });
+
+    runTest(suite, "PP-EXPLICIT-002", "blocked and out-of-bound explicit starts fail", [] {
+        MapData map = makeMap(8, 4);
+        const Pose2D goal{map.getMapper().gridToWorldCenter(GridCoord{6, 1}), 0.0f};
+        map.addObstacle(GridCoord{2, 1});
+        const PathResult blocked = PathPlanner::plan(
+            map, Pose2D{map.getMapper().gridToWorldCenter(GridCoord{2, 1}), 0.0f}, goal, 0.0f
+        );
+        const PathResult outside = PathPlanner::plan(
+            map, Pose2D{sf::Vector2f(-10.0f, 15.0f), 0.0f}, goal, 0.0f
+        );
+        return isExplicitFailure(blocked, "start cell", true)
+            && isExplicitFailure(outside, "start cell", true);
+    });
+
     return suite.exitCode();
 }

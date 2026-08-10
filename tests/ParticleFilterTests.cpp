@@ -2,6 +2,7 @@
 #include "LidarSimulator.hpp"
 #include "MapLikelihoodField.hpp"
 #include "ParticleFilter.hpp"
+#include "LocalizationVisualization.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,6 +47,7 @@ AmclConfig exactConfig(std::size_t count = 100) {
     config.alpha5 = 0.0;
     config.maxBeams = 31;
     config.sigmaHit = 20.0;
+    config.minimumLikelihoodContrast = 1.0;
     return config;
 }
 
@@ -306,26 +308,33 @@ int main() {
         const Pose2D truth{sf::Vector2f(170.0f, 210.0f), 0.35f};
         const LaserScan scan = lidar.simulate(truth, map, scanEngine);
         ParticleFilter correct(config);
+        ParticleFilter smallError(config);
         ParticleFilter wrong(config);
         std::mt19937 correctEngine(21);
+        std::mt19937 smallEngine(21);
         std::mt19937 wrongEngine(22);
         correct.initializeLocal(truth, map, correctEngine);
+        smallError.initializeLocal(
+            Pose2D{sf::Vector2f(195.0f, 225.0f), 0.45f}, map, smallEngine
+        );
         wrong.initializeLocal(Pose2D{sf::Vector2f(760.0f, 650.0f), -1.2f}, map, wrongEngine);
         const SensorUpdateResult correctResult = correct.sensorUpdate(scan, field);
+        const SensorUpdateResult smallResult = smallError.sensorUpdate(scan, field);
         const SensorUpdateResult wrongResult = wrong.sensorUpdate(scan, field);
         const double weightSum = [&] {
             double sum = 0.0;
             for (const Particle& particle : correct.getParticles()) sum += particle.weight;
             return sum;
         }();
-        return correctResult.updated && wrongResult.updated
-            && correctResult.observationQuality > wrongResult.observationQuality
+        return correctResult.updated && smallResult.updated && wrongResult.updated
+            && correctResult.observationQuality > smallResult.observationQuality
+            && smallResult.observationQuality > wrongResult.observationQuality
             && std::isfinite(correctResult.observationQuality)
             && std::isfinite(wrongResult.observationQuality)
             && near(weightSum, 1.0, 1e-9);
     });
 
-    runTest(suite, "SENSOR-002", "beamless scan is rejected without consuming pending odometry", [] {
+    runTest(suite, "SENSOR-002", "all-max scan commits pending motion without claiming sensor evidence", [] {
         MapData map = makeAsymmetricMap();
         AmclConfig config = exactConfig(80);
         config.updateMinTranslation = 0.0;
@@ -341,12 +350,31 @@ int main() {
         LaserScan validScan = lidar.simulate(truth, map, randomEngine);
         localizer.updateWithScan(validScan, field, map, randomEngine);
         const std::size_t previousUpdates = localizer.getStatistics().sensorUpdateCount;
+        const Pose2D beforePose = localizer.getEstimate().pose;
         localizer.accumulateOdometry(OdometryDelta{0.0, 20.0, 0.0, true});
         LaserScan beamless = validScan;
         std::fill(beamless.ranges.begin(), beamless.ranges.end(), beamless.maxRange);
         const bool updated = localizer.updateWithScan(beamless, field, map, randomEngine);
-        return !updated && localizer.needsSensorUpdate()
-            && localizer.getStatistics().sensorUpdateCount == previousUpdates;
+        const Pose2D afterPose = localizer.getEstimate().pose;
+        const bool passed = updated && !localizer.needsSensorUpdate()
+            && localizer.getStatistics().sensorUpdateCount == previousUpdates
+            && near(afterPose.position.x,
+                beforePose.position.x + 20.0 * std::cos(beforePose.heading), 1e-4)
+            && near(afterPose.position.y,
+                beforePose.position.y + 20.0 * std::sin(beforePose.heading), 1e-4)
+            && localizer.getStatistics().sensor.maxRangeBeams
+                == localizer.getStatistics().sensor.selectedBeams;
+        if (!passed) {
+            std::cerr << "All-max metrics: updated=" << updated
+                      << " needs=" << localizer.needsSensorUpdate()
+                      << " updates=" << localizer.getStatistics().sensorUpdateCount
+                      << " previous=" << previousUpdates
+                      << " before=" << beforePose.position.x
+                      << " after=" << afterPose.position.x
+                      << " max=" << localizer.getStatistics().sensor.maxRangeBeams
+                      << " selected=" << localizer.getStatistics().sensor.selectedBeams << "\n";
+        }
+        return passed;
     });
 
     runTest(suite, "AMCL-001", "first scan bypasses thresholds and small odometry increments accumulate", [] {
@@ -418,6 +446,474 @@ int main() {
         localizer.updateWithScan(lidar.simulate(poseB, map, randomEngine), field, map, randomEngine);
         return localizer.getStatistics().recoveryProbability == 0.0
             && localizer.getStatistics().state != LocalizationState::Recovering;
+    });
+
+    runTest(suite, "CLUSTER-001", "separated equal modes remain deterministic clusters", [] {
+        AmclConfig config;
+        config.clusterBinSizeX = 50.0;
+        config.clusterBinSizeY = 50.0;
+        config.clusterBinSizeYaw = 0.25;
+        const std::vector<Particle> particles = {
+            Particle{Pose2D{sf::Vector2f(0.0f, 0.0f), 0.0f}, 0.25},
+            Particle{Pose2D{sf::Vector2f(10.0f, 0.0f), 0.0f}, 0.25},
+            Particle{Pose2D{sf::Vector2f(300.0f, 0.0f), 0.0f}, 0.25},
+            Particle{Pose2D{sf::Vector2f(310.0f, 0.0f), 0.0f}, 0.25}
+        };
+        const std::vector<ParticleCluster> clusters = ParticleFilter::clusterParticles(
+            particles, config
+        );
+        return clusters.size() == 2
+            && near(clusters[0].weight, 0.5)
+            && near(clusters[1].weight, 0.5)
+            && near(clusters[0].pose.position.x, 5.0)
+            && near(clusters[1].pose.position.x, 305.0);
+    });
+
+    runTest(suite, "CLUSTER-002", "yaw bins wrap across negative and positive pi", [] {
+        AmclConfig config;
+        config.clusterBinSizeX = 50.0;
+        config.clusterBinSizeY = 50.0;
+        config.clusterBinSizeYaw = 0.20;
+        const std::vector<Particle> particles = {
+            Particle{Pose2D{sf::Vector2f(10.0f, 10.0f), static_cast<float>(kLocalizationPi - 0.03)}, 0.5},
+            Particle{Pose2D{sf::Vector2f(10.0f, 10.0f), static_cast<float>(-kLocalizationPi + 0.03)}, 0.5}
+        };
+        const std::vector<ParticleCluster> clusters = ParticleFilter::clusterParticles(
+            particles, config
+        );
+        return clusters.size() == 1 && clusters.front().headingResultant > 0.99
+            && near(std::abs(clusters.front().pose.heading), kLocalizationPi, 0.01);
+    });
+
+    runTest(suite, "CLUSTER-003", "negligible bridge particles cannot merge supported modes", [] {
+        AmclConfig config;
+        config.clusterBinSizeX = 50.0;
+        config.clusterBinSizeY = 50.0;
+        config.clusterBinSizeYaw = 0.25;
+        config.clusterMinimumBinWeightRatio = 0.05;
+        std::vector<Particle> particles = {
+            Particle{Pose2D{sf::Vector2f(0.0f, 0.0f), 0.0f}, 0.495},
+            Particle{Pose2D{sf::Vector2f(300.0f, 0.0f), 0.0f}, 0.495}
+        };
+        for (int bin = 1; bin <= 5; ++bin) {
+            particles.push_back(Particle{
+                Pose2D{sf::Vector2f(static_cast<float>(bin * 50 + 1), 0.0f), 0.0f},
+                0.002
+            });
+        }
+        const auto clusters = ParticleFilter::clusterParticles(particles, config);
+        return clusters.size() == 2
+            && near(clusters[0].weight, 0.495)
+            && near(clusters[1].weight, 0.495)
+            && near(clusters[0].pose.position.x, 0.0)
+            && near(clusters[1].pose.position.x, 300.0);
+    });
+
+    runTest(suite, "CLUSTER-004", "unequal modes expose deterministic dominant statistics", [] {
+        AmclConfig config;
+        const std::vector<Particle> particles = {
+            Particle{Pose2D{sf::Vector2f(0.0f, 0.0f), -0.1f}, 0.375},
+            Particle{Pose2D{sf::Vector2f(10.0f, 0.0f), 0.1f}, 0.375},
+            Particle{Pose2D{sf::Vector2f(300.0f, 0.0f), 0.0f}, 0.125},
+            Particle{Pose2D{sf::Vector2f(310.0f, 0.0f), 0.0f}, 0.125}
+        };
+        const auto clusters = ParticleFilter::clusterParticles(particles, config);
+        return clusters.size() == 2
+            && near(clusters[0].weight, 0.75)
+            && near(clusters[1].weight, 0.25)
+            && near(clusters[0].pose.position.x, 5.0)
+            && clusters[0].covariance.xx() > 0.0
+            && near(clusters[0].spatialExtent.size.x, 10.0)
+            && clusters[0].headingExtent > 0.09;
+    });
+
+    runTest(suite, "SENSOR-003", "beam accounting is bounded and outlier skipping is deterministic", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        AmclConfig config = exactConfig(80);
+        config.maxBeams = 31;
+        config.doBeamSkip = true;
+        config.beamSkipThreshold = 0.80;
+        config.beamSkipErrorThreshold = 0.95;
+        ParticleFilter first(config);
+        ParticleFilter second(config);
+        std::mt19937 firstEngine(700);
+        std::mt19937 secondEngine(700);
+        const Pose2D truth{sf::Vector2f(175.0f, 175.0f), 0.15f};
+        first.initializeLocal(truth, map, firstEngine);
+        second.initializeLocal(truth, map, secondEngine);
+        std::mt19937 scanEngine(701);
+        LaserScan scan = deterministicLidar().simulate(truth, map, scanEngine);
+        scan.ranges[scan.ranges.size() / 2] = 37.0f;
+        const SensorUpdateResult a = first.sensorUpdate(scan, field);
+        const SensorUpdateResult b = second.sensorUpdate(scan, field);
+        return a.updated && b.updated && a.skippedBeams > 0
+            && a.skippedBeams == b.skippedBeams
+            && a.usedBeams + a.skippedBeams + a.invalidBeams + a.maxRangeBeams
+                <= a.selectedBeams
+            && a.selectedBeams <= a.totalBeams;
+    });
+
+    runTest(suite, "SUPPORT-001", "zero-obstacle map cannot report confident convergence", [] {
+        MapData map(50.0f);
+        map.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f), sf::Vector2f(500.0f, 500.0f)
+        ));
+        AmclConfig config = exactConfig(80);
+        config.minimumSensorUpdatesForConvergence = 1;
+        AmclLocalizer localizer(config);
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        std::mt19937 randomEngine(800);
+        const Pose2D truth{sf::Vector2f(125.0f, 175.0f), 0.2f};
+        if (!localizer.initializeLocal(truth, map, randomEngine)) return false;
+        const LaserScan scan = deterministicLidar().simulate(truth, map, randomEngine);
+        if (!localizer.updateWithScan(scan, field, map, randomEngine)) return false;
+        return localizer.getStatistics().support == LocalizationSupport::Insufficient
+            && localizer.getStatistics().state != LocalizationState::Converged
+            && !localizer.getEstimate().converged;
+    });
+
+    runTest(suite, "SENSOR-004", "majority-corrupt beam skipping falls back safely", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        AmclConfig config = exactConfig(60);
+        config.maxBeams = 31;
+        config.doBeamSkip = true;
+        config.beamSkipThreshold = 0.95;
+        config.beamSkipErrorThreshold = 0.50;
+        ParticleFilter filter(config);
+        std::mt19937 engine(901);
+        const Pose2D truth{sf::Vector2f(175.0f, 175.0f), 0.15f};
+        if (!filter.initializeLocal(truth, map, engine)) return false;
+        LaserScan scan = deterministicLidar().simulate(truth, map, engine);
+        std::fill(scan.ranges.begin(), scan.ranges.end(), 37.0f);
+        const SensorUpdateResult result = filter.sensorUpdate(scan, field);
+        return result.updated && result.beamSkipFallback
+            && result.skippedBeams == 0 && result.usedBeams == result.selectedBeams;
+    });
+
+    runTest(suite, "SENSOR-005", "disabled beam skipping reproduces the non-skip path", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        AmclConfig config = exactConfig(60);
+        config.initialStdDevX = 20.0;
+        config.initialStdDevY = 20.0;
+        config.initialStdDevYaw = 0.1;
+        ParticleFilter first(config);
+        ParticleFilter second(config);
+        std::mt19937 firstEngine(902);
+        std::mt19937 secondEngine(902);
+        const Pose2D truth{sf::Vector2f(175.0f, 175.0f), 0.15f};
+        if (!first.initializeLocal(truth, map, firstEngine)
+            || !second.initializeLocal(truth, map, secondEngine)) return false;
+        std::mt19937 scanEngine(903);
+        const LaserScan scan = deterministicLidar().simulate(truth, map, scanEngine);
+        const SensorUpdateResult a = first.sensorUpdate(scan, field, false);
+        const SensorUpdateResult b = second.sensorUpdate(scan, field, false);
+        return a.updated && b.updated && a.skippedBeams == 0 && b.skippedBeams == 0
+            && std::equal(
+                first.getParticles().begin(), first.getParticles().end(),
+                second.getParticles().begin(), [](const Particle& x, const Particle& y) {
+                    return near(x.weight, y.weight, 1e-12);
+                }
+            );
+    });
+
+    runTest(suite, "KLD-003", "KLD equation and parameter directions match reference values", [] {
+        AmclConfig loose;
+        loose.minParticles = 50;
+        loose.maxParticles = 5000;
+        loose.initialParticleCount = 500;
+        AmclConfig tighter = loose;
+        tighter.pfErr = loose.pfErr * 0.5;
+        AmclConfig higherConfidence = loose;
+        higherConfidence.pfZ = 2.8;
+        const std::size_t baseline = ParticleFilter::requiredKldSamples(20, loose);
+        return ParticleFilter::requiredKldSamples(1, loose) == 50
+            && ParticleFilter::requiredKldSamples(2, loose) == 66
+            && ParticleFilter::requiredKldSamples(5, loose) == 134
+            && baseline == 363
+            && ParticleFilter::requiredKldSamples(100, loose) == 1347
+            && ParticleFilter::requiredKldSamples(1000, loose) == 5000
+            && ParticleFilter::requiredKldSamples(20, tighter) == 725
+            && ParticleFilter::requiredKldSamples(20, higherConfidence) == 409
+            && ParticleFilter::requiredKldSamples(20, tighter) > baseline
+            && ParticleFilter::requiredKldSamples(20, higherConfidence) > baseline;
+    });
+
+    runTest(suite, "HISTORY-001", "localization history is bounded by configured capacity", [] {
+        MapData map = makeAsymmetricMap();
+        AmclConfig config = exactConfig(20);
+        config.historyCapacity = 3;
+        AmclLocalizer localizer(config);
+        std::mt19937 engine(904);
+        const Pose2D pose{sf::Vector2f(175.0f, 175.0f), 0.1f};
+        if (!localizer.initializeLocal(pose, map, engine)) return false;
+        for (int index = 0; index < 5; ++index) {
+            localizer.appendHistory(Pose2D{
+                sf::Vector2f(static_cast<float>(index), 0.0f), 0.0f
+            });
+        }
+        return localizer.getHistory().size() == 3
+            && near(localizer.getHistory().front().odometry.position.x, 2.0)
+            && near(localizer.getHistory().back().odometry.position.x, 4.0);
+    });
+
+    runTest(suite, "MOTION-004", "scan-to-scan motion is invariant to frame segmentation", [] {
+        MapData map = makeAsymmetricMap();
+        AmclConfig config = exactConfig(40);
+        config.alpha1 = 0.02;
+        config.alpha2 = 0.001;
+        config.alpha3 = 0.01;
+        config.alpha4 = 0.02;
+        config.alpha5 = 0.005;
+        config.updateMinTranslation = 0.0;
+        config.resampleInterval = 100;
+        AmclLocalizer oneFrame(config);
+        AmclLocalizer tenFrames(config);
+        std::mt19937 oneEngine(905);
+        std::mt19937 tenEngine(905);
+        const Pose2D start{sf::Vector2f(175.0f, 175.0f), 0.1f};
+        if (!oneFrame.initializeLocal(start, map, oneEngine)
+            || !tenFrames.initializeLocal(start, map, tenEngine)) return false;
+        oneFrame.accumulateOdometry(OdometryDelta{0.0, 100.0, 0.0, true});
+        for (int frame = 0; frame < 10; ++frame) {
+            tenFrames.accumulateOdometry(OdometryDelta{0.0, 10.0, 0.0, true});
+        }
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        std::mt19937 scanEngine(906);
+        const LaserScan scan = deterministicLidar().simulate(
+            Pose2D{sf::Vector2f(274.5f, 185.0f), 0.1f}, map, scanEngine
+        );
+        if (!oneFrame.updateWithScan(scan, field, map, oneEngine)
+            || !tenFrames.updateWithScan(scan, field, map, tenEngine)) return false;
+        return std::equal(
+            oneFrame.getParticles().begin(), oneFrame.getParticles().end(),
+            tenFrames.getParticles().begin(), [](const Particle& first, const Particle& second) {
+                return near(first.pose.position.x, second.pose.position.x, 1e-12)
+                    && near(first.pose.position.y, second.pose.position.y, 1e-12)
+                    && near(first.pose.heading, second.pose.heading, 1e-12)
+                    && near(first.weight, second.weight, 1e-12);
+            }
+        );
+    });
+
+    runTest(suite, "INIT-003", "global initialization clears prior convergence lifecycle", [] {
+        MapData map = makeAsymmetricMap();
+        AmclConfig config = exactConfig(80);
+        config.minimumSensorUpdatesForConvergence = 1;
+        config.minimumGlobalSensorUpdatesForConvergence = 3;
+        AmclLocalizer localizer(config);
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        std::mt19937 engine(907);
+        const Pose2D truth{sf::Vector2f(175.0f, 175.0f), 0.15f};
+        if (!localizer.initializeLocal(truth, map, engine)) return false;
+        const LaserScan scan = deterministicLidar().simulate(truth, map, engine);
+        if (!localizer.updateWithScan(scan, field, map, engine)) return false;
+        if (localizer.getStatistics().state != LocalizationState::Converged) return false;
+        if (!localizer.initializeGlobal(map, engine)) return false;
+        return localizer.getStatistics().initialization == LocalizationInitialization::Global
+            && localizer.getStatistics().sensorUpdateCount == 0
+            && localizer.getStatistics().state != LocalizationState::Converged
+            && !localizer.getEstimate().converged;
+    });
+
+    runTest(suite, "RNG-001", "visualization options do not consume inference randomness", [] {
+        MapData map = makeAsymmetricMap();
+        AmclConfig config = exactConfig(40);
+        config.initialStdDevX = 15.0;
+        config.initialStdDevY = 15.0;
+        config.initialStdDevYaw = 0.1;
+        ParticleFilter visible(config);
+        ParticleFilter hidden(config);
+        std::mt19937 visibleEngine(908);
+        std::mt19937 hiddenEngine(908);
+        const Pose2D start{sf::Vector2f(175.0f, 175.0f), 0.15f};
+        if (!visible.initializeLocal(start, map, visibleEngine)
+            || !hidden.initializeLocal(start, map, hiddenEngine)) return false;
+        LocalizationViewOptions visibleView;
+        LocalizationViewOptions hiddenView = visibleView;
+        hiddenView.particles = false;
+        const sf::VertexArray visibleVertices = buildParticleVertices(
+            visible.getParticles(), visibleView, sf::Color::Magenta
+        );
+        const sf::VertexArray hiddenVertices = buildParticleVertices(
+            hidden.getParticles(), hiddenView, sf::Color::Magenta
+        );
+        visible.motionUpdate(OdometryDelta{0.0, 20.0, 0.0, true}, visibleEngine);
+        hidden.motionUpdate(OdometryDelta{0.0, 20.0, 0.0, true}, hiddenEngine);
+        return visibleVertices.getVertexCount() == visible.getParticles().size()
+            && hiddenVertices.getVertexCount() == 0
+            && std::equal(
+            visible.getParticles().begin(), visible.getParticles().end(),
+            hidden.getParticles().begin(), [](const Particle& first, const Particle& second) {
+                return near(first.pose.position.x, second.pose.position.x, 1e-12)
+                    && near(first.pose.position.y, second.pose.position.y, 1e-12)
+                    && near(first.pose.heading, second.pose.heading, 1e-12)
+                    && near(first.weight, second.weight, 1e-12);
+            }
+        );
+    });
+
+    runTest(suite, "SENSOR-006", "beam skipping preserves pose estimate under deterministic outliers", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        AmclConfig enabledConfig;
+        enabledConfig.minParticles = 300;
+        enabledConfig.maxParticles = 300;
+        enabledConfig.initialParticleCount = 300;
+        enabledConfig.initialStdDevX = 90.0;
+        enabledConfig.initialStdDevY = 90.0;
+        enabledConfig.initialStdDevYaw = 0.5;
+        enabledConfig.maxBeams = 31;
+        enabledConfig.doBeamSkip = true;
+        enabledConfig.beamSkipThreshold = 0.60;
+        enabledConfig.beamSkipErrorThreshold = 0.80;
+        AmclConfig disabledConfig = enabledConfig;
+        disabledConfig.doBeamSkip = false;
+        ParticleFilter enabled(enabledConfig);
+        ParticleFilter disabled(disabledConfig);
+        std::mt19937 enabledEngine(909);
+        std::mt19937 disabledEngine(909);
+        const Pose2D truth{sf::Vector2f(170.0f, 210.0f), 0.35f};
+        if (!enabled.initializeLocal(truth, map, enabledEngine)
+            || !disabled.initializeLocal(truth, map, disabledEngine)) return false;
+        std::mt19937 scanEngine(910);
+        LaserScan scan = deterministicLidar().simulate(truth, map, scanEngine);
+        for (std::size_t index = 0; index < scan.ranges.size(); index += 10) {
+            scan.ranges[index] = scan.minRange + 1.0f;
+        }
+        const SensorUpdateResult enabledResult = enabled.sensorUpdate(scan, field);
+        const SensorUpdateResult disabledResult = disabled.sensorUpdate(scan, field);
+        const auto poseError = [&](const LocalizationEstimate& estimate) {
+            return std::hypot(
+                estimate.pose.position.x - truth.position.x,
+                estimate.pose.position.y - truth.position.y
+            );
+        };
+        const double enabledError = poseError(enabled.estimate());
+        const double disabledError = poseError(disabled.estimate());
+        const bool passed = enabledResult.updated && disabledResult.updated
+            && enabledResult.skippedBeams > 0
+            && enabledError <= disabledError + 1e-6;
+        if (!passed) {
+            std::cerr << "Beam-skip metrics: skipped=" << enabledResult.skippedBeams
+                      << " fallback=" << enabledResult.beamSkipFallback
+                      << " enabledError=" << enabledError
+                      << " disabledError=" << disabledError << "\n";
+        }
+        return passed;
+    });
+
+    runTest(suite, "SENSOR-007", "clean scan keeps all consistent beams when skipping is enabled", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        AmclConfig config = exactConfig(60);
+        config.doBeamSkip = true;
+        config.beamSkipThreshold = 0.9;
+        ParticleFilter filter(config);
+        std::mt19937 engine(911);
+        const Pose2D truth{sf::Vector2f(170.0f, 210.0f), 0.35f};
+        if (!filter.initializeLocal(truth, map, engine)) return false;
+        const LaserScan scan = deterministicLidar().simulate(truth, map, engine);
+        const SensorUpdateResult result = filter.sensorUpdate(scan, field);
+        return result.updated && result.skippedBeams == 0
+            && result.usedBeams > 0 && !result.beamSkipFallback;
+    });
+
+    runTest(suite, "SENSOR-008", "particle prediction applies the same LiDAR extrinsics as simulation", [] {
+        MapData map = makeAsymmetricMap();
+        MapLikelihoodField field;
+        field.rebuild(map, 150.0);
+        LidarConfig lidarConfig;
+        lidarConfig.beamCount = 61;
+        lidarConfig.fieldOfView = 1.5 * kLocalizationPi;
+        lidarConfig.minRange = 1.0;
+        lidarConfig.maxRange = 900.0;
+        lidarConfig.offsetX = 35.0;
+        lidarConfig.offsetY = -12.0;
+        lidarConfig.yawOffset = 0.28;
+        lidarConfig.rangeNoiseStdDev = 0.0;
+        LidarSimulator lidar(lidarConfig);
+        AmclConfig config = exactConfig(40);
+        ParticleFilter correct(config);
+        ParticleFilter zeroExtrinsic(config);
+        std::mt19937 engineA(912);
+        std::mt19937 engineB(912);
+        const Pose2D truth{sf::Vector2f(170.0f, 210.0f), 0.35f};
+        if (!correct.initializeLocal(truth, map, engineA)
+            || !zeroExtrinsic.initializeLocal(truth, map, engineB)) return false;
+        LaserScan scan = lidar.simulate(truth, map, engineA);
+        LaserScan wrongScan = scan;
+        wrongScan.sensorOffsetX = 0.0;
+        wrongScan.sensorOffsetY = 0.0;
+        wrongScan.sensorYawOffset = 0.0;
+        const SensorUpdateResult right = correct.sensorUpdate(scan, field);
+        const SensorUpdateResult wrong = zeroExtrinsic.sensorUpdate(wrongScan, field);
+        return right.updated && wrong.updated
+            && right.observationQuality > wrong.observationQuality;
+    });
+
+    runTest(suite, "SUPPORT-002", "unobserved obstacle cannot make an all-max scan well supported", [] {
+        MapData map(50.0f);
+        map.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f), sf::Vector2f(2000.0f, 2000.0f)
+        ));
+        map.addObstacle(GridCoord{1, 1});
+        AmclConfig config = exactConfig(60);
+        config.minimumSensorUpdatesForConvergence = 1;
+        AmclLocalizer localizer(config);
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        LidarConfig lidarConfig;
+        lidarConfig.beamCount = 31;
+        lidarConfig.fieldOfView = 2.0 * kLocalizationPi;
+        lidarConfig.minRange = 1.0;
+        lidarConfig.maxRange = 100.0;
+        lidarConfig.rangeNoiseStdDev = 0.0;
+        std::mt19937 engine(913);
+        const Pose2D truth{sf::Vector2f(1000.0f, 1000.0f), 0.2f};
+        if (!localizer.initializeLocal(truth, map, engine)) return false;
+        const LaserScan scan = LidarSimulator(lidarConfig).simulate(truth, map, engine);
+        return localizer.updateWithScan(scan, field, map, engine)
+            && localizer.getStatistics().support == LocalizationSupport::Weak
+            && localizer.getStatistics().state != LocalizationState::Converged
+            && localizer.getStatistics().sensor.maxRangeBeams
+                == localizer.getStatistics().sensor.selectedBeams;
+    });
+
+    runTest(suite, "GLOBAL-001", "global warm-up still handles ESS depletion", [] {
+        MapData map = makeAsymmetricMap();
+        AmclConfig config;
+        config.minParticles = 200;
+        config.maxParticles = 1000;
+        config.initialParticleCount = 800;
+        config.resampleInterval = 1;
+        config.minimumGlobalSensorUpdatesForConvergence = 15;
+        config.recoveryAlphaSlow = 0.0;
+        config.recoveryAlphaFast = 0.0;
+        AmclLocalizer localizer(config);
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        std::mt19937 engine(914);
+        const Pose2D truth{sf::Vector2f(170.0f, 210.0f), 0.35f};
+        if (!localizer.initializeGlobal(map, engine)) return false;
+        const LaserScan scan = deterministicLidar().simulate(truth, map, engine);
+        if (!localizer.updateWithScan(scan, field, map, engine)) return false;
+        const LocalizationStatistics& stats = localizer.getStatistics();
+        return stats.sensorUpdateCount == 1
+            && stats.preResampleEffectiveSampleSize
+                < 0.9 * static_cast<double>(config.initialParticleCount)
+            && near(stats.effectiveSampleSize, static_cast<double>(stats.particleCount), 1e-6)
+            && stats.state != LocalizationState::Converged;
     });
 
     return suite.exitCode();

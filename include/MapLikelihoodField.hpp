@@ -12,20 +12,14 @@ public:
     void clear();
 
     bool isValid() const;
+    bool isFree(const sf::Vector2f& worldPoint) const;
     double distanceAt(const sf::Vector2f& worldPoint) const;
     std::uint64_t getSourceRevision() const;
 
 private:
-    std::size_t sampleIndex(int col, int row) const;
-
     sf::FloatRect m_boundary;
-    double m_resolution = 0.0;
     double m_maxDistance = 0.0;
-    int m_minCol = 0;
-    int m_minRow = 0;
-    int m_maxCol = -1;
-    int m_maxRow = -1;
-    std::vector<double> m_obstacleDistances;
+    std::vector<sf::FloatRect> m_obstacleBounds;
     std::size_t m_geometrySignature = 0;
     std::uint64_t m_sourceRevision = 0;
     bool m_valid = false;

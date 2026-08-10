@@ -71,7 +71,9 @@ void validateConfig(const LidarConfig& config) {
         && std::isfinite(config.maxRange)
         && config.minRange >= 0.0
         && config.minRange < config.maxRange
-        && std::isfinite(config.sensorHeading)
+        && std::isfinite(config.offsetX)
+        && std::isfinite(config.offsetY)
+        && std::isfinite(config.yawOffset)
         && std::isfinite(config.rangeNoiseStdDev)
         && config.rangeNoiseStdDev >= 0.0;
     if (!valid) {
@@ -106,8 +108,8 @@ LaserScan LidarSimulator::simulate(
     scan.ranges.resize(m_config.beamCount);
     scan.angleMin = static_cast<float>(
         m_config.beamCount == 1
-            ? m_config.sensorHeading
-            : m_config.sensorHeading - (m_config.fieldOfView * 0.5)
+            ? 0.0
+            : -(m_config.fieldOfView * 0.5)
     );
     scan.angleIncrement = static_cast<float>(
         m_config.beamCount == 1
@@ -116,6 +118,23 @@ LaserScan LidarSimulator::simulate(
     );
     scan.minRange = static_cast<float>(m_config.minRange);
     scan.maxRange = static_cast<float>(m_config.maxRange);
+    scan.sensorOffsetX = m_config.offsetX;
+    scan.sensorOffsetY = m_config.offsetY;
+    scan.sensorYawOffset = m_config.yawOffset;
+
+    const double cosine = std::cos(groundTruthPose.heading);
+    const double sine = std::sin(groundTruthPose.heading);
+    const sf::Vector2f sensorOrigin(
+        groundTruthPose.position.x + static_cast<float>(cosine * m_config.offsetX - sine * m_config.offsetY),
+        groundTruthPose.position.y + static_cast<float>(sine * m_config.offsetX + cosine * m_config.offsetY)
+    );
+    if (!mapData.containsWorldPoint(sensorOrigin)) {
+        std::fill(
+            scan.ranges.begin(), scan.ranges.end(),
+            std::numeric_limits<float>::quiet_NaN()
+        );
+        return scan;
+    }
 
     std::normal_distribution<double> rangeNoise(
         0.0,
@@ -125,15 +144,15 @@ LaserScan LidarSimulator::simulate(
 
     for (std::size_t beam = 0; beam < m_config.beamCount; ++beam) {
         const double relativeAngle = scan.angleMin + scan.angleIncrement * static_cast<double>(beam);
-        const double worldAngle = groundTruthPose.heading + relativeAngle;
+        const double worldAngle = groundTruthPose.heading + m_config.yawOffset + relativeAngle;
         const double directionX = std::cos(worldAngle);
         const double directionY = std::sin(worldAngle);
 
         double boundaryEntry = 0.0;
         double boundaryExit = 0.0;
         if (!rayRectangleInterval(
-                groundTruthPose.position.x,
-                groundTruthPose.position.y,
+                sensorOrigin.x,
+                sensorOrigin.y,
                 directionX,
                 directionY,
                 mapData.getWorldBoundary(),
@@ -152,8 +171,8 @@ LaserScan LidarSimulator::simulate(
             double obstacleEntry = 0.0;
             double obstacleExit = 0.0;
             if (rayRectangleInterval(
-                    groundTruthPose.position.x,
-                    groundTruthPose.position.y,
+                    sensorOrigin.x,
+                    sensorOrigin.y,
                     directionX,
                     directionY,
                     obstacleBounds,
@@ -163,7 +182,8 @@ LaserScan LidarSimulator::simulate(
             }
         }
 
-        if (m_config.rangeNoiseStdDev > 0.0) {
+        const bool maximumRangeReturn = nearestRange >= m_config.maxRange - 1e-9;
+        if (m_config.rangeNoiseStdDev > 0.0 && !maximumRangeReturn) {
             nearestRange += rangeNoise(randomEngine);
         }
         scan.ranges[beam] = static_cast<float>(

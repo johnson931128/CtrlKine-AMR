@@ -32,6 +32,41 @@ struct SimulatorRuntimeTestAccess {
         return Simulator::isRobotAtInitialWaypoint(mapData, amr, pathExecution);
     }
 
+    static bool isObservedPoseAtInitialWaypoint(
+        const MapData& mapData,
+        const Pose2D& observedPose,
+        const PathExecution& pathExecution
+    ) {
+        return Simulator::isObservedPoseAtInitialWaypoint(
+            mapData, observedPose, pathExecution
+        );
+    }
+
+    static bool localizationPassesNavigationGate(
+        const LocalizationEstimate& estimate,
+        const LocalizationStatistics& statistics,
+        const AmclConfig& config,
+        std::string& reason
+    ) {
+        return Simulator::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+    }
+
+    static bool applyLocalizationDrivenCommand(
+        const Pose2D& observedPose,
+        const sf::Vector2f& target,
+        float dt,
+        float maxSpeed,
+        float maxAngularSpeed,
+        float trackWidth,
+        AMR& amr
+    ) {
+        return Simulator::applyLocalizationDrivenCommand(
+            observedPose, target, dt, maxSpeed, maxAngularSpeed, trackWidth, amr
+        );
+    }
+
     static OdometryDelta observeAcceptedMotion(
         const Pose2D& acceptedPose,
         OdometrySimulator& odometrySimulator,
@@ -332,6 +367,108 @@ int main() {
             && localizer.getStatistics().state == LocalizationState::Uninitialized
             && samePoint(odometry.getOdometryPose().position, acceptedPose.position)
             && near(odometry.getOdometryPose().heading, acceptedPose.heading);
+    });
+
+    runTest(suite, "LOCALIZATION-NAV-001", "confidence gate uses belief diagnostics without truth error", [] {
+        AmclConfig config = localizationTestConfig();
+        LocalizationEstimate estimate;
+        estimate.valid = true;
+        estimate.converged = true;
+        estimate.covariance.values[0] = 25.0;
+        estimate.covariance.values[4] = 25.0;
+        estimate.covariance.values[8] = 0.01;
+        LocalizationStatistics statistics;
+        statistics.state = LocalizationState::Converged;
+        statistics.support = LocalizationSupport::Good;
+        statistics.dominantClusterWeight = 0.9;
+        std::string reason;
+        const bool accepted = SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        statistics.state = LocalizationState::Ambiguous;
+        const bool rejectsState = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        statistics.state = LocalizationState::Converged;
+        statistics.support = LocalizationSupport::Insufficient;
+        const bool rejectsSupport = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        statistics.support = LocalizationSupport::Good;
+        statistics.dominantClusterWeight = config.navigationDominantWeight - 0.01;
+        const bool rejectsDominance = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        statistics.dominantClusterWeight = 0.9;
+        estimate.covariance.values[0] = config.navigationPositionStdDev
+            * config.navigationPositionStdDev * 2.0;
+        const bool rejectsCovariance = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        estimate.covariance.values[0] = 25.0;
+        estimate.converged = false;
+        const bool rejectsEstimateFlag = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        return accepted && rejectsState && rejectsSupport && rejectsDominance
+            && rejectsCovariance && rejectsEstimateFlag && !reason.empty();
+    });
+
+    runTest(suite, "LOCALIZATION-NAV-002", "initial waypoint can be checked from estimated pose", [] {
+        MapData map(50.0f);
+        PathExecution execution;
+        execution.install(successfulResult({GridCoord{2, 3}, GridCoord{3, 3}}));
+        const Pose2D estimate{map.getMapper().gridToWorldCenter(GridCoord{2, 3}), 0.5f};
+        return SimulatorRuntimeTestAccess::isObservedPoseAtInitialWaypoint(
+            map, estimate, execution
+        );
+    });
+
+    runTest(suite, "LOCALIZATION-NAV-003", "estimated-pose plan drives truth and loss stops further command", [] {
+        MapData map(50.0f);
+        map.setWorldBoundary(sf::FloatRect(
+            sf::Vector2f(0.0f, 0.0f), sf::Vector2f(500.0f, 500.0f)
+        ));
+        const Pose2D persistentStart{map.getMapper().gridToWorldCenter(GridCoord{0, 0}), 0.0f};
+        const Pose2D estimatePose{map.getMapper().gridToWorldCenter(GridCoord{2, 2}), 0.0f};
+        const Pose2D goal{map.getMapper().gridToWorldCenter(GridCoord{6, 2}), 0.0f};
+        map.setRobotStartPose(persistentStart);
+        map.setRobotGoalPose(goal);
+        const PathResult plan = PathPlanner::plan(map, estimatePose, goal, 0.0f);
+        if (!plan.success || plan.path.empty() || !(plan.path.front() == GridCoord{2, 2})
+            || !map.getRobotStartPose().has_value()
+            || map.getRobotStartPose()->position != persistentStart.position) return false;
+
+        AmclConfig config = localizationTestConfig();
+        LocalizationEstimate estimate;
+        estimate.valid = true;
+        estimate.converged = true;
+        estimate.pose = estimatePose;
+        estimate.covariance.values[0] = 25.0;
+        estimate.covariance.values[4] = 25.0;
+        estimate.covariance.values[8] = 0.01;
+        LocalizationStatistics statistics;
+        statistics.state = LocalizationState::Converged;
+        statistics.support = LocalizationSupport::Good;
+        statistics.dominantClusterWeight = 0.9;
+        std::string reason;
+        if (!SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+                estimate, statistics, config, reason)) return false;
+
+        AMR truth(testConfig(), estimatePose.position);
+        const sf::Vector2f target = map.getMapper().gridToWorldCenter(plan.path[1]);
+        SimulatorRuntimeTestAccess::applyLocalizationDrivenCommand(
+            estimate.pose, target, 0.1f, 100.0f, 4.0f, testConfig().trackWidth, truth
+        );
+        const sf::Vector2f moved = truth.getPosition();
+        if (moved.x <= estimatePose.position.x) return false;
+
+        statistics.support = LocalizationSupport::Insufficient;
+        const bool lost = !SimulatorRuntimeTestAccess::localizationPassesNavigationGate(
+            estimate, statistics, config, reason
+        );
+        const sf::Vector2f stopped = truth.getPosition();
+        return lost && !reason.empty() && samePoint(moved, stopped);
     });
 
     return suite.exitCode();

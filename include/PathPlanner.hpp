@@ -19,6 +19,12 @@ class PathPlanner {
 public:
     static PathResult plan(const MapData& mapData);
     static PathResult plan(const MapData& mapData, float clearanceRadius);
+    static PathResult plan(
+        const MapData& mapData,
+        const Pose2D& explicitStartPose,
+        const Pose2D& explicitGoalPose,
+        float clearanceRadius
+    );
 
 private:
     static PathResult planWithClearance(const MapData& mapData, float clearanceRadius);

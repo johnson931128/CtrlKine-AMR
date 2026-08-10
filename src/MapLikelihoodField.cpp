@@ -68,54 +68,18 @@ void MapLikelihoodField::rebuild(const MapData& mapData, double maxDistance) {
         throw std::invalid_argument("Likelihood-field configuration is invalid.");
     }
 
-    const int minCol = static_cast<int>(std::floor(boundary.position.x / resolution));
-    const int minRow = static_cast<int>(std::floor(boundary.position.y / resolution));
-    const int maxCol = static_cast<int>(std::ceil(
-        (boundary.position.x + boundary.size.x) / resolution
-    ));
-    const int maxRow = static_cast<int>(std::ceil(
-        (boundary.position.y + boundary.size.y) / resolution
-    ));
-    const std::size_t columnCount = static_cast<std::size_t>(maxCol - minCol + 1);
-    const std::size_t rowCount = static_cast<std::size_t>(maxRow - minRow + 1);
-    if (columnCount < 2 || rowCount < 2
-        || columnCount > 100000
-        || rowCount > 100000
-        || columnCount > (10000000 / rowCount)) {
-        throw std::invalid_argument("Likelihood-field sample dimensions are invalid.");
-    }
-
-    std::vector<double> samples(columnCount * rowCount, maxDistance);
+    std::vector<sf::FloatRect> obstacleBounds;
+    obstacleBounds.reserve(mapData.getObstacles().size());
     const double gridSize = mapData.getGridResolution();
-    for (int row = minRow; row <= maxRow; ++row) {
-        for (int col = minCol; col <= maxCol; ++col) {
-            const sf::Vector2f samplePoint(
-                static_cast<float>(col * resolution),
-                static_cast<float>(row * resolution)
-            );
-            double nearest = maxDistance;
-            for (const GridCoord& obstacle : mapData.getObstacles()) {
-                const sf::Vector2f topLeft = mapData.getMapper().gridToWorldTopLeft(obstacle);
-                const sf::FloatRect bounds(
-                    topLeft,
-                    sf::Vector2f(static_cast<float>(gridSize), static_cast<float>(gridSize))
-                );
-                nearest = std::min(nearest, distanceToRectangle(samplePoint, bounds));
-            }
-            const std::size_t index = static_cast<std::size_t>(row - minRow) * columnCount
-                + static_cast<std::size_t>(col - minCol);
-            samples[index] = std::min(nearest, maxDistance);
-        }
+    for (const GridCoord& obstacle : mapData.getObstacles()) {
+        obstacleBounds.emplace_back(
+            mapData.getMapper().gridToWorldTopLeft(obstacle),
+            sf::Vector2f(static_cast<float>(gridSize), static_cast<float>(gridSize))
+        );
     }
-
     m_boundary = boundary;
-    m_resolution = resolution;
     m_maxDistance = maxDistance;
-    m_minCol = minCol;
-    m_minRow = minRow;
-    m_maxCol = maxCol;
-    m_maxRow = maxRow;
-    m_obstacleDistances = std::move(samples);
+    m_obstacleBounds = std::move(obstacleBounds);
     m_geometrySignature = geometrySignature(mapData);
     m_sourceRevision = mapData.getGeometryRevision();
     m_valid = true;
@@ -130,13 +94,24 @@ void MapLikelihoodField::rebuildIfNeeded(const MapData& mapData, double maxDista
 }
 
 void MapLikelihoodField::clear() {
-    m_obstacleDistances.clear();
+    m_obstacleBounds.clear();
     m_geometrySignature = 0;
     m_valid = false;
 }
 
 bool MapLikelihoodField::isValid() const {
     return m_valid;
+}
+
+bool MapLikelihoodField::isFree(const sf::Vector2f& worldPoint) const {
+    if (!m_valid || !std::isfinite(worldPoint.x) || !std::isfinite(worldPoint.y)
+        || !m_boundary.contains(worldPoint)) {
+        return false;
+    }
+    return std::none_of(
+        m_obstacleBounds.begin(), m_obstacleBounds.end(),
+        [&](const sf::FloatRect& obstacle) { return obstacle.contains(worldPoint); }
+    );
 }
 
 double MapLikelihoodField::distanceAt(const sf::Vector2f& worldPoint) const {
@@ -155,25 +130,19 @@ double MapLikelihoodField::distanceAt(const sf::Vector2f& worldPoint) const {
         return std::clamp(boundaryDistance, 0.0, m_maxDistance);
     }
 
-    const double gridX = worldPoint.x / m_resolution;
-    const double gridY = worldPoint.y / m_resolution;
-    int leftCol = static_cast<int>(std::floor(gridX));
-    int topRow = static_cast<int>(std::floor(gridY));
-    double tx = gridX - leftCol;
-    double ty = gridY - topRow;
-
-    leftCol = std::clamp(leftCol, m_minCol, m_maxCol - 1);
-    topRow = std::clamp(topRow, m_minRow, m_maxRow - 1);
-    tx = std::clamp(gridX - leftCol, 0.0, 1.0);
-    ty = std::clamp(gridY - topRow, 0.0, 1.0);
-
-    const double topLeft = m_obstacleDistances[sampleIndex(leftCol, topRow)];
-    const double topRight = m_obstacleDistances[sampleIndex(leftCol + 1, topRow)];
-    const double bottomLeft = m_obstacleDistances[sampleIndex(leftCol, topRow + 1)];
-    const double bottomRight = m_obstacleDistances[sampleIndex(leftCol + 1, topRow + 1)];
-    const double top = topLeft + (topRight - topLeft) * tx;
-    const double bottom = bottomLeft + (bottomRight - bottomLeft) * tx;
-    const double obstacleDistance = top + (bottom - top) * ty;
+    // Obstacles are static grid-cell AABBs. Caching those surfaces makes the
+    // continuous query exact, including faces and diagonal corners, while the
+    // field remains map-derived and is rebuilt only when geometry changes.
+    double obstacleDistance = m_maxDistance;
+    for (const sf::FloatRect& bounds : m_obstacleBounds) {
+        if (worldPoint.x < bounds.position.x - obstacleDistance
+            || worldPoint.x > bounds.position.x + bounds.size.x + obstacleDistance
+            || worldPoint.y < bounds.position.y - obstacleDistance
+            || worldPoint.y > bounds.position.y + bounds.size.y + obstacleDistance) {
+            continue;
+        }
+        obstacleDistance = std::min(obstacleDistance, distanceToRectangle(worldPoint, bounds));
+    }
 
     return std::clamp(
         std::min(obstacleDistance, boundaryDistance),
@@ -184,10 +153,4 @@ double MapLikelihoodField::distanceAt(const sf::Vector2f& worldPoint) const {
 
 std::uint64_t MapLikelihoodField::getSourceRevision() const {
     return m_sourceRevision;
-}
-
-std::size_t MapLikelihoodField::sampleIndex(int col, int row) const {
-    const std::size_t columnCount = static_cast<std::size_t>(m_maxCol - m_minCol + 1);
-    return static_cast<std::size_t>(row - m_minRow) * columnCount
-        + static_cast<std::size_t>(col - m_minCol);
 }

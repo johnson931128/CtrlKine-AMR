@@ -45,6 +45,17 @@ void OdometrySimulator::reset(const Pose2D& groundTruthPose) {
     m_initialized = true;
 }
 
+void OdometrySimulator::rebaseGroundTruthReference(const Pose2D& groundTruthPose) {
+    if (!finitePose(groundTruthPose)) {
+        throw std::invalid_argument("Odometry rebase pose is invalid.");
+    }
+    m_previousGroundTruthPose = groundTruthPose;
+    m_previousGroundTruthPose.heading = static_cast<float>(
+        normalizeLocalizationAngle(m_previousGroundTruthPose.heading)
+    );
+    m_initialized = true;
+}
+
 OdometryDelta OdometrySimulator::observe(
     const Pose2D& currentGroundTruthPose,
     std::mt19937& randomEngine

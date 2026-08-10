@@ -18,6 +18,39 @@ PathResult PathPlanner::plan(const MapData& mapData, float clearanceRadius) {
     return planWithClearance(mapData, clearanceRadius);
 }
 
+PathResult PathPlanner::plan(
+    const MapData& mapData,
+    const Pose2D& explicitStartPose,
+    const Pose2D& explicitGoalPose,
+    float clearanceRadius
+) {
+    if (!std::isfinite(explicitStartPose.position.x)
+        || !std::isfinite(explicitStartPose.position.y)
+        || !std::isfinite(explicitStartPose.heading)
+        || !std::isfinite(explicitGoalPose.position.x)
+        || !std::isfinite(explicitGoalPose.position.y)
+        || !std::isfinite(explicitGoalPose.heading)
+        || !std::isfinite(clearanceRadius) || clearanceRadius < 0.0f) {
+        PathResult result;
+        result.message = "Planning failed: explicit pose or clearance is invalid.";
+        return result;
+    }
+    if (!mapData.containsWorldPoint(explicitStartPose.position)) {
+        PathResult result;
+        result.message = "Planning failed: start cell is blocked.";
+        return result;
+    }
+    if (!mapData.containsWorldPoint(explicitGoalPose.position)) {
+        PathResult result;
+        result.message = "Planning failed: goal cell is blocked.";
+        return result;
+    }
+    MapData planningMap = mapData;
+    planningMap.setRobotStartPose(explicitStartPose);
+    planningMap.setRobotGoalPose(explicitGoalPose);
+    return planWithClearance(planningMap, clearanceRadius);
+}
+
 PathResult PathPlanner::planWithClearance(const MapData& mapData, float clearanceRadius) {
     PathResult result;
 

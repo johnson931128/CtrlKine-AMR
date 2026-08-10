@@ -24,7 +24,10 @@ TEST_RUNTIME_TARGET = $(TEST_BUILD_DIR)/SimulatorRuntimeTests.exe
 TEST_LOCALIZATION_SENSOR_TARGET = $(TEST_BUILD_DIR)/LocalizationSensorTests.exe
 TEST_PARTICLE_FILTER_TARGET = $(TEST_BUILD_DIR)/ParticleFilterTests.exe
 TEST_LOCALIZATION_INTEGRATION_TARGET = $(TEST_BUILD_DIR)/LocalizationIntegrationTests.exe
-TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET) $(TEST_PATH_TARGET) $(TEST_EXECUTION_TARGET) $(TEST_RUNTIME_TARGET) $(TEST_LOCALIZATION_SENSOR_TARGET) $(TEST_PARTICLE_FILTER_TARGET) $(TEST_LOCALIZATION_INTEGRATION_TARGET)
+TEST_LOCALIZATION_CONFIG_TARGET = $(TEST_BUILD_DIR)/LocalizationConfigTests.exe
+TEST_LOCALIZATION_STRESS_TARGET = $(TEST_BUILD_DIR)/LocalizationStressTests.exe
+LOCALIZATION_BENCHMARK_TARGET = $(TEST_BUILD_DIR)/LocalizationBenchmark.exe
+TEST_TARGETS = $(TEST_MAPPER_TARGET) $(TEST_MAP_TARGET) $(TEST_FILE_TARGET) $(TEST_PATH_TARGET) $(TEST_EXECUTION_TARGET) $(TEST_RUNTIME_TARGET) $(TEST_LOCALIZATION_SENSOR_TARGET) $(TEST_PARTICLE_FILTER_TARGET) $(TEST_LOCALIZATION_INTEGRATION_TARGET) $(TEST_LOCALIZATION_CONFIG_TARGET)
 
 all: $(TARGET)
 
@@ -39,7 +42,14 @@ test: $(TEST_TARGETS)
 	$(TEST_LOCALIZATION_SENSOR_TARGET) || status=1; \
 	$(TEST_PARTICLE_FILTER_TARGET) || status=1; \
 	$(TEST_LOCALIZATION_INTEGRATION_TARGET) || status=1; \
+	$(TEST_LOCALIZATION_CONFIG_TARGET) || status=1; \
 	exit $$status
+
+test-localization-stress: $(TEST_LOCALIZATION_STRESS_TARGET)
+	$(TEST_LOCALIZATION_STRESS_TARGET)
+
+localization-benchmark: $(LOCALIZATION_BENCHMARK_TARGET)
+	$(LOCALIZATION_BENCHMARK_TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS) $(LDLIBS)
@@ -84,6 +94,18 @@ $(TEST_BUILD_DIR)/LocalizationIntegrationTests.o: tests/LocalizationIntegrationT
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
 
+$(TEST_BUILD_DIR)/LocalizationConfigTests.o: tests/LocalizationConfigTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
+$(TEST_BUILD_DIR)/LocalizationStressTests.o: tests/LocalizationStressTests.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
+$(TEST_BUILD_DIR)/LocalizationBenchmark.o: tests/LocalizationBenchmark.cpp
+	@mkdir -p $(TEST_BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
+
 $(TEST_BUILD_DIR)/MapData.o: src/MapData.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -103,16 +125,25 @@ $(TEST_PATH_TARGET): $(TEST_BUILD_DIR)/PathPlannerTests.o $(TEST_BUILD_DIR)/Path
 $(TEST_EXECUTION_TARGET): $(TEST_BUILD_DIR)/PathExecutionTests.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
+$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_LOCALIZATION_SENSOR_TARGET): $(TEST_BUILD_DIR)/LocalizationSensorTests.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_LOCALIZATION_SENSOR_TARGET): $(TEST_BUILD_DIR)/LocalizationSensorTests.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_PARTICLE_FILTER_TARGET): $(TEST_BUILD_DIR)/ParticleFilterTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_PARTICLE_FILTER_TARGET): $(TEST_BUILD_DIR)/ParticleFilterTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(TEST_LOCALIZATION_INTEGRATION_TARGET): $(TEST_BUILD_DIR)/LocalizationIntegrationTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_LOCALIZATION_CONFIG_TARGET): $(TEST_BUILD_DIR)/LocalizationConfigTests.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(TEST_LOCALIZATION_STRESS_TARGET): $(TEST_BUILD_DIR)/LocalizationStressTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(LOCALIZATION_BENCHMARK_TARGET): $(TEST_BUILD_DIR)/LocalizationBenchmark.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(TEST_BUILD_DIR)/PathPlanner.o: src/PathPlanner.cpp

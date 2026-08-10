@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -39,15 +41,46 @@ void validateConfig(const AmclConfig& config) {
         && config.sigmaHit > 0.0 && std::isfinite(config.sigmaHit)
         && config.zHit >= 0.0 && std::isfinite(config.zHit)
         && config.zRand >= 0.0 && std::isfinite(config.zRand)
-        && config.zHit + config.zRand > 0.0
+        && std::isfinite(config.zHit + config.zRand)
+        && std::abs(config.zHit + config.zRand - 1.0) <= 1e-9
         && config.likelihoodMaxDistance > 0.0
         && std::isfinite(config.likelihoodMaxDistance)
         && config.maxBeams > 0
+        && std::isfinite(config.beamSkipDistance) && config.beamSkipDistance >= 0.0
+        && std::isfinite(config.beamSkipThreshold) && config.beamSkipThreshold >= 0.0
+        && config.beamSkipThreshold <= 1.0
+        && std::isfinite(config.beamSkipErrorThreshold)
+        && config.beamSkipErrorThreshold >= 0.0 && config.beamSkipErrorThreshold <= 1.0
         && config.kldBinSizeX > 0.0 && std::isfinite(config.kldBinSizeX)
         && config.kldBinSizeY > 0.0 && std::isfinite(config.kldBinSizeY)
         && config.kldBinSizeYaw > 0.0 && std::isfinite(config.kldBinSizeYaw)
         && config.pfErr > 0.0 && std::isfinite(config.pfErr)
-        && config.pfZ > 0.0 && std::isfinite(config.pfZ);
+        && config.pfZ > 0.0 && std::isfinite(config.pfZ)
+        && config.clusterBinSizeX > 0.0 && std::isfinite(config.clusterBinSizeX)
+        && config.clusterBinSizeY > 0.0 && std::isfinite(config.clusterBinSizeY)
+        && config.clusterBinSizeYaw > 0.0 && std::isfinite(config.clusterBinSizeYaw)
+        && config.clusterMinimumBinWeightRatio > 0.0
+        && config.clusterMinimumBinWeightRatio <= 1.0
+        && std::isfinite(config.clusterMinimumBinWeightRatio)
+        && config.significantClusterWeight >= 0.0 && config.significantClusterWeight <= 1.0
+        && std::isfinite(config.significantClusterWeight)
+        && config.dominantClusterWeight >= 0.0 && config.dominantClusterWeight <= 1.0
+        && std::isfinite(config.dominantClusterWeight)
+        && config.dominantToSecondRatio >= 1.0 && std::isfinite(config.dominantToSecondRatio)
+        && config.dominantSwitchMargin >= 0.0 && config.dominantSwitchMargin <= 1.0
+        && std::isfinite(config.dominantSwitchMargin)
+        && config.minimumHeadingResultant >= 0.0 && config.minimumHeadingResultant <= 1.0
+        && std::isfinite(config.minimumHeadingResultant)
+        && config.recoveringProbabilityThreshold >= 0.0
+        && config.recoveringProbabilityThreshold <= 1.0
+        && std::isfinite(config.recoveringProbabilityThreshold)
+        && config.navigationDominantWeight >= 0.0 && config.navigationDominantWeight <= 1.0
+        && std::isfinite(config.navigationDominantWeight)
+        && config.navigationPositionStdDev >= 0.0
+        && std::isfinite(config.navigationPositionStdDev)
+        && config.navigationHeadingStdDev >= 0.0
+        && std::isfinite(config.navigationHeadingStdDev)
+        && config.historyCapacity > 0;
     if (!valid) {
         throw std::invalid_argument("AMCL particle-filter configuration is invalid.");
     }
@@ -197,13 +230,18 @@ void ParticleFilter::motionUpdate(
 
 SensorUpdateResult ParticleFilter::sensorUpdate(
     const LaserScan& scan,
-    const MapLikelihoodField& field
+    const MapLikelihoodField& field,
+    bool allowBeamSkipping
 ) {
+    SensorUpdateResult result;
+    result.totalBeams = scan.ranges.size();
     if (m_particles.empty() || !field.isValid() || scan.ranges.empty()
         || !std::isfinite(scan.angleMin) || !std::isfinite(scan.angleIncrement)
         || !std::isfinite(scan.minRange) || !std::isfinite(scan.maxRange)
+        || !std::isfinite(scan.sensorOffsetX) || !std::isfinite(scan.sensorOffsetY)
+        || !std::isfinite(scan.sensorYawOffset)
         || scan.minRange < 0.0f || scan.minRange >= scan.maxRange) {
-        return {};
+        return result;
     }
 
     const std::size_t selectedCount = std::min(m_config.maxBeams, scan.ranges.size());
@@ -219,49 +257,126 @@ SensorUpdateResult ParticleFilter::sensorUpdate(
             selectedIndices.push_back(static_cast<std::size_t>(std::llround(position)));
         }
     }
-
-    const bool hasUsableBeam = std::any_of(
-        selectedIndices.begin(), selectedIndices.end(), [&](std::size_t scanIndex) {
-            const double range = scan.ranges[scanIndex];
-            return std::isfinite(range) && range >= scan.minRange && range < scan.maxRange;
+    result.selectedBeams = selectedIndices.size();
+    std::vector<std::size_t> candidateIndices;
+    candidateIndices.reserve(selectedIndices.size());
+    for (const std::size_t scanIndex : selectedIndices) {
+        const double range = scan.ranges[scanIndex];
+        if (!std::isfinite(range) || range < scan.minRange) {
+            ++result.invalidBeams;
+        } else if (range >= scan.maxRange) {
+            ++result.maxRangeBeams;
+        } else {
+            candidateIndices.push_back(scanIndex);
         }
-    );
-    if (!hasUsableBeam) {
-        return {};
+    }
+    if (candidateIndices.empty()) {
+        return result;
     }
     normalizeWeights(m_particles);
+
+    std::vector<std::vector<double>> endpointDistances(
+        candidateIndices.size(), std::vector<double>(m_particles.size(), m_config.likelihoodMaxDistance)
+    );
+    std::vector<bool> validParticle(m_particles.size(), true);
+    std::size_t validParticleCount = 0;
+    for (std::size_t particleIndex = 0; particleIndex < m_particles.size(); ++particleIndex) {
+        const Pose2D& pose = m_particles[particleIndex].pose;
+        const double cosine = std::cos(pose.heading);
+        const double sine = std::sin(pose.heading);
+        const sf::Vector2f sensorOrigin(
+            pose.position.x + static_cast<float>(cosine * scan.sensorOffsetX - sine * scan.sensorOffsetY),
+            pose.position.y + static_cast<float>(sine * scan.sensorOffsetX + cosine * scan.sensorOffsetY)
+        );
+        validParticle[particleIndex] = field.isFree(pose.position)
+            && field.isFree(sensorOrigin);
+        validParticleCount += validParticle[particleIndex] ? 1 : 0;
+    }
+    if (validParticleCount == 0) {
+        result.usedBeams = candidateIndices.size();
+        result.updated = true;
+        return result;
+    }
+    for (std::size_t candidate = 0; candidate < candidateIndices.size(); ++candidate) {
+        const std::size_t scanIndex = candidateIndices[candidate];
+        const double range = scan.ranges[scanIndex];
+        for (std::size_t particleIndex = 0; particleIndex < m_particles.size(); ++particleIndex) {
+            if (!validParticle[particleIndex]) {
+                continue;
+            }
+            const Pose2D& pose = m_particles[particleIndex].pose;
+            const double cosine = std::cos(pose.heading);
+            const double sine = std::sin(pose.heading);
+            const sf::Vector2f sensorOrigin(
+                pose.position.x + static_cast<float>(cosine * scan.sensorOffsetX - sine * scan.sensorOffsetY),
+                pose.position.y + static_cast<float>(sine * scan.sensorOffsetX + cosine * scan.sensorOffsetY)
+            );
+            const double beamAngle = pose.heading + scan.sensorYawOffset + scan.angleMin
+                + scan.angleIncrement * static_cast<double>(scanIndex);
+            const sf::Vector2f endpoint(
+                sensorOrigin.x + static_cast<float>(range * std::cos(beamAngle)),
+                sensorOrigin.y + static_cast<float>(range * std::sin(beamAngle))
+            );
+            endpointDistances[candidate][particleIndex] = std::min(
+                field.distanceAt(endpoint), m_config.likelihoodMaxDistance
+            );
+        }
+    }
+
+    std::vector<bool> useCandidate(candidateIndices.size(), true);
+    if (m_config.doBeamSkip && allowBeamSkipping) {
+        for (std::size_t candidate = 0; candidate < candidateIndices.size(); ++candidate) {
+            std::size_t agreeingParticles = 0;
+            for (std::size_t particleIndex = 0; particleIndex < m_particles.size(); ++particleIndex) {
+                if (validParticle[particleIndex]
+                    && endpointDistances[candidate][particleIndex] <= m_config.beamSkipDistance) {
+                    ++agreeingParticles;
+                }
+            }
+            const double agreeingFraction = static_cast<double>(agreeingParticles)
+                / static_cast<double>(validParticleCount);
+            if (agreeingFraction < m_config.beamSkipThreshold) {
+                useCandidate[candidate] = false;
+                ++result.skippedBeams;
+            }
+        }
+        const double skippedRatio = static_cast<double>(result.skippedBeams)
+            / static_cast<double>(candidateIndices.size());
+        if (skippedRatio > m_config.beamSkipErrorThreshold) {
+            std::fill(useCandidate.begin(), useCandidate.end(), true);
+            result.skippedBeams = 0;
+            result.beamSkipFallback = true;
+        }
+    }
+    result.usedBeams = candidateIndices.size() - result.skippedBeams;
+    if (result.usedBeams == 0) {
+        return result;
+    }
 
     std::vector<double> logWeights(m_particles.size(), -std::numeric_limits<double>::infinity());
     double maximumLogWeight = -std::numeric_limits<double>::infinity();
     double qualitySum = 0.0;
     double qualityWeightSum = 0.0;
+    double maximumAverageLikelihood = 0.0;
 
     for (std::size_t particleIndex = 0; particleIndex < m_particles.size(); ++particleIndex) {
         const Particle& particle = m_particles[particleIndex];
+        if (!validParticle[particleIndex]) {
+            continue;
+        }
         double beamLogLikelihood = 0.0;
         std::size_t usedBeams = 0;
 
-        for (const std::size_t scanIndex : selectedIndices) {
-            const double range = scan.ranges[scanIndex];
-            if (!std::isfinite(range) || range < scan.minRange || range >= scan.maxRange) {
+        for (std::size_t candidate = 0; candidate < candidateIndices.size(); ++candidate) {
+            if (!useCandidate[candidate]) {
                 continue;
             }
-
-            const double beamAngle = particle.pose.heading
-                + scan.angleMin
-                + scan.angleIncrement * static_cast<double>(scanIndex);
-            const sf::Vector2f endpoint(
-                particle.pose.position.x + static_cast<float>(range * std::cos(beamAngle)),
-                particle.pose.position.y + static_cast<float>(range * std::sin(beamAngle))
-            );
-            const double distance = std::min(
-                field.distanceAt(endpoint),
-                m_config.likelihoodMaxDistance
-            );
+            const double distance = endpointDistances[candidate][particleIndex];
             const double hitProbability = std::exp(
                 -0.5 * distance * distance / (m_config.sigmaHit * m_config.sigmaHit)
             );
-            const double randomProbability = 1.0 / static_cast<double>(scan.maxRange);
+            const double randomProbability = 1.0
+                / static_cast<double>(scan.maxRange - scan.minRange);
             const double likelihood = std::max(
                 kWeightFloor,
                 m_config.zHit * hitProbability + m_config.zRand * randomProbability
@@ -276,15 +391,17 @@ SensorUpdateResult ParticleFilter::sensorUpdate(
 
         const double averageBeamLogLikelihood = beamLogLikelihood
             / static_cast<double>(usedBeams);
-        qualitySum += particle.weight * std::exp(averageBeamLogLikelihood);
+        const double averageLikelihood = std::exp(averageBeamLogLikelihood);
+        qualitySum += particle.weight * averageLikelihood;
         qualityWeightSum += particle.weight;
+        maximumAverageLikelihood = std::max(maximumAverageLikelihood, averageLikelihood);
         const double priorLogWeight = std::log(std::max(kWeightFloor, particle.weight));
         logWeights[particleIndex] = priorLogWeight + beamLogLikelihood;
         maximumLogWeight = std::max(maximumLogWeight, logWeights[particleIndex]);
     }
 
     if (!std::isfinite(maximumLogWeight)) {
-        return {};
+        return result;
     }
 
     for (std::size_t index = 0; index < m_particles.size(); ++index) {
@@ -293,10 +410,12 @@ SensorUpdateResult ParticleFilter::sensorUpdate(
             : 0.0;
     }
     normalizeWeights(m_particles);
-    return SensorUpdateResult{
-        true,
-        qualityWeightSum > 0.0 ? qualitySum / qualityWeightSum : 0.0
-    };
+    result.updated = true;
+    result.observationQuality = qualityWeightSum > 0.0 ? qualitySum / qualityWeightSum : 0.0;
+    result.likelihoodContrast = result.observationQuality > kWeightFloor
+        ? maximumAverageLikelihood / result.observationQuality
+        : 0.0;
+    return result;
 }
 
 void ParticleFilter::adaptiveResample(
@@ -476,6 +595,186 @@ LocalizationEstimate ParticleFilter::estimateParticles(
     estimate.particleCount = particles.size();
     estimate.effectiveSampleSize = effectiveSampleSize(particles);
     return estimate;
+}
+
+std::vector<ParticleCluster> ParticleFilter::clusterParticles(
+    const std::vector<Particle>& particles,
+    const AmclConfig& config
+) {
+    using Bin = std::tuple<int, int, int>;
+    if (particles.empty()) {
+        return {};
+    }
+    double totalWeight = 0.0;
+    for (const Particle& particle : particles) {
+        if (!finitePose(particle.pose) || !std::isfinite(particle.weight)
+            || particle.weight < 0.0) {
+            return {};
+        }
+        totalWeight += particle.weight;
+    }
+    if (!std::isfinite(totalWeight) || totalWeight <= std::numeric_limits<double>::min()) {
+        return {};
+    }
+
+    const int yawBinCount = std::max(1, static_cast<int>(std::ceil(
+        2.0 * kLocalizationPi / config.clusterBinSizeYaw
+    )));
+    auto binFor = [&](const Pose2D& pose) {
+        int yawBin = static_cast<int>(std::floor(
+            (normalizeLocalizationAngle(pose.heading) + kLocalizationPi)
+            / config.clusterBinSizeYaw
+        ));
+        yawBin = std::clamp(yawBin, 0, yawBinCount - 1);
+        return Bin{
+            static_cast<int>(std::floor(pose.position.x / config.clusterBinSizeX)),
+            static_cast<int>(std::floor(pose.position.y / config.clusterBinSizeY)),
+            yawBin
+        };
+    };
+
+    std::map<Bin, std::vector<std::size_t>> allBins;
+    std::map<Bin, double> binWeights;
+    for (std::size_t index = 0; index < particles.size(); ++index) {
+        const Bin bin = binFor(particles[index].pose);
+        allBins[bin].push_back(index);
+        binWeights[bin] += particles[index].weight / totalWeight;
+    }
+    double maximumBinWeight = 0.0;
+    for (const auto& [bin, weight] : binWeights) {
+        (void)bin;
+        maximumBinWeight = std::max(maximumBinWeight, weight);
+    }
+    const double connectivityThreshold = maximumBinWeight
+        * config.clusterMinimumBinWeightRatio;
+    std::map<Bin, std::vector<std::size_t>> bins;
+    for (const auto& [bin, indices] : allBins) {
+        if (binWeights[bin] + 1e-15 >= connectivityThreshold) {
+            bins.emplace(bin, indices);
+        }
+    }
+
+    std::set<Bin> visited;
+    std::vector<ParticleCluster> clusters;
+    for (const auto& [startBin, ignored] : bins) {
+        (void)ignored;
+        if (!visited.insert(startBin).second) {
+            continue;
+        }
+        std::queue<Bin> pending;
+        pending.push(startBin);
+        std::vector<std::size_t> indices;
+        while (!pending.empty()) {
+            const Bin current = pending.front();
+            pending.pop();
+            const auto found = bins.find(current);
+            if (found == bins.end()) {
+                continue;
+            }
+            indices.insert(indices.end(), found->second.begin(), found->second.end());
+            const auto [x, y, yaw] = current;
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dyaw = -1; dyaw <= 1; ++dyaw) {
+                        if (dx == 0 && dy == 0 && dyaw == 0) {
+                            continue;
+                        }
+                        int neighborYaw = (yaw + dyaw) % yawBinCount;
+                        if (neighborYaw < 0) {
+                            neighborYaw += yawBinCount;
+                        }
+                        const Bin neighbor{x + dx, y + dy, neighborYaw};
+                        if (bins.find(neighbor) != bins.end()
+                            && visited.insert(neighbor).second) {
+                            pending.push(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+
+        std::vector<Particle> members;
+        members.reserve(indices.size());
+        double clusterWeight = 0.0;
+        float minX = std::numeric_limits<float>::infinity();
+        float minY = std::numeric_limits<float>::infinity();
+        float maxX = -std::numeric_limits<float>::infinity();
+        float maxY = -std::numeric_limits<float>::infinity();
+        for (const std::size_t index : indices) {
+            members.push_back(particles[index]);
+            clusterWeight += particles[index].weight;
+            minX = std::min(minX, particles[index].pose.position.x);
+            minY = std::min(minY, particles[index].pose.position.y);
+            maxX = std::max(maxX, particles[index].pose.position.x);
+            maxY = std::max(maxY, particles[index].pose.position.y);
+        }
+        const LocalizationEstimate clusterEstimate = estimateParticles(members);
+        if (!clusterEstimate.valid) {
+            continue;
+        }
+        ParticleCluster cluster;
+        cluster.particleCount = members.size();
+        cluster.weight = clusterWeight / totalWeight;
+        cluster.pose = clusterEstimate.pose;
+        cluster.covariance = clusterEstimate.covariance;
+        cluster.spatialExtent = sf::FloatRect(
+            sf::Vector2f(minX, minY), sf::Vector2f(maxX - minX, maxY - minY)
+        );
+        double cosine = 0.0;
+        double sine = 0.0;
+        for (const Particle& member : members) {
+            const double normalizedWeight = member.weight / clusterWeight;
+            cosine += normalizedWeight * std::cos(member.pose.heading);
+            sine += normalizedWeight * std::sin(member.pose.heading);
+            cluster.headingExtent = std::max(
+                cluster.headingExtent,
+                std::abs(normalizeLocalizationAngle(member.pose.heading - cluster.pose.heading))
+            );
+        }
+        cluster.headingResultant = std::hypot(cosine, sine);
+        clusters.push_back(cluster);
+    }
+
+    std::stable_sort(clusters.begin(), clusters.end(), [](const ParticleCluster& first, const ParticleCluster& second) {
+        if (std::abs(first.weight - second.weight) > 1e-12) {
+            return first.weight > second.weight;
+        }
+        if (first.particleCount != second.particleCount) {
+            return first.particleCount > second.particleCount;
+        }
+        if (first.pose.position.x != second.pose.position.x) {
+            return first.pose.position.x < second.pose.position.x;
+        }
+        if (first.pose.position.y != second.pose.position.y) {
+            return first.pose.position.y < second.pose.position.y;
+        }
+        return first.pose.heading < second.pose.heading;
+    });
+    return clusters;
+}
+
+double ParticleFilter::particleEntropy(const std::vector<Particle>& particles) {
+    if (particles.size() <= 1) {
+        return 0.0;
+    }
+    double total = 0.0;
+    for (const Particle& particle : particles) {
+        if (!std::isfinite(particle.weight) || particle.weight < 0.0) {
+            return 0.0;
+        }
+        total += particle.weight;
+    }
+    if (total <= std::numeric_limits<double>::min() || !std::isfinite(total)) {
+        return 0.0;
+    }
+    double entropy = 0.0;
+    for (const Particle& particle : particles) {
+        const double probability = particle.weight / total;
+        if (probability > 0.0) {
+            entropy -= probability * std::log(probability);
+        }
+    }
+    return entropy / std::log(static_cast<double>(particles.size()));
 }
 
 std::size_t ParticleFilter::requiredKldSamples(

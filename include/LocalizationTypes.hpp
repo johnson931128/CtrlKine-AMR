@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "CoordinateTypes.hpp"
@@ -30,6 +31,9 @@ struct LaserScan {
     float angleIncrement = 0.0f;
     float minRange = 0.0f;
     float maxRange = 0.0f;
+    double sensorOffsetX = 0.0;
+    double sensorOffsetY = 0.0;
+    double sensorYawOffset = 0.0;
 };
 
 struct OdometryDelta {
@@ -42,6 +46,14 @@ struct OdometryDelta {
 struct SensorUpdateResult {
     bool updated = false;
     double observationQuality = 0.0;
+    double likelihoodContrast = 0.0;
+    std::size_t totalBeams = 0;
+    std::size_t selectedBeams = 0;
+    std::size_t usedBeams = 0;
+    std::size_t skippedBeams = 0;
+    std::size_t invalidBeams = 0;
+    std::size_t maxRangeBeams = 0;
+    bool beamSkipFallback = false;
 };
 
 struct LocalizationCovariance {
@@ -55,8 +67,31 @@ struct LocalizationCovariance {
 enum class LocalizationState {
     Uninitialized,
     Tracking,
+    Ambiguous,
     Converged,
     Recovering
+};
+
+enum class LocalizationSupport {
+    Insufficient,
+    Weak,
+    Good
+};
+
+enum class LocalizationInitialization {
+    None,
+    Local,
+    Global
+};
+
+struct ParticleCluster {
+    std::size_t particleCount = 0;
+    double weight = 0.0;
+    Pose2D pose;
+    LocalizationCovariance covariance;
+    sf::FloatRect spatialExtent;
+    double headingExtent = 0.0;
+    double headingResultant = 0.0;
 };
 
 struct LocalizationEstimate {
@@ -66,16 +101,42 @@ struct LocalizationEstimate {
     bool converged = false;
     std::size_t particleCount = 0;
     double effectiveSampleSize = 0.0;
+    double dominantWeight = 0.0;
+    double secondWeight = 0.0;
+    std::size_t significantClusterCount = 0;
 };
 
 struct LocalizationStatistics {
     LocalizationState state = LocalizationState::Uninitialized;
     std::size_t particleCount = 0;
     double effectiveSampleSize = 0.0;
+    double preResampleEffectiveSampleSize = 0.0;
     double slowWeightAverage = 0.0;
     double fastWeightAverage = 0.0;
     double recoveryProbability = 0.0;
     std::size_t sensorUpdateCount = 0;
+    LocalizationSupport support = LocalizationSupport::Insufficient;
+    LocalizationInitialization initialization = LocalizationInitialization::None;
+    double dominantClusterWeight = 0.0;
+    double secondClusterWeight = 0.0;
+    std::size_t clusterCount = 0;
+    std::size_t significantClusterCount = 0;
+    double particleEntropy = 0.0;
+    SensorUpdateResult sensor;
+    std::string explanation;
+};
+
+struct LocalizationHistorySample {
+    Pose2D estimate;
+    Pose2D odometry;
+    std::size_t particleCount = 0;
+    double effectiveSampleSize = 0.0;
+    double dominantWeight = 0.0;
+    double secondWeight = 0.0;
+    double positionSigma = 0.0;
+    double headingSigma = 0.0;
+    double recoveryProbability = 0.0;
+    double observationQuality = 0.0;
 };
 
 struct LidarConfig {
@@ -83,7 +144,9 @@ struct LidarConfig {
     double fieldOfView = 1.5 * kLocalizationPi;
     double minRange = 5.0;
     double maxRange = 800.0;
-    double sensorHeading = 0.0;
+    double offsetX = 0.0;
+    double offsetY = 0.0;
+    double yawOffset = 0.0;
     double rangeNoiseStdDev = 1.0;
 };
 
@@ -114,6 +177,10 @@ struct AmclConfig {
     double zRand = 0.05;
     double likelihoodMaxDistance = 150.0;
     std::size_t maxBeams = 31;
+    bool doBeamSkip = true;
+    double beamSkipDistance = 60.0;
+    double beamSkipThreshold = 0.30;
+    double beamSkipErrorThreshold = 0.90;
 
     double updateMinTranslation = 10.0;
     double updateMinRotation = 0.10;
@@ -131,6 +198,24 @@ struct AmclConfig {
 
     double convergencePositionStdDev = 35.0;
     double convergenceHeadingStdDev = 0.25;
+    std::size_t minimumSensorUpdatesForConvergence = 2;
+    std::size_t minimumGlobalSensorUpdatesForConvergence = 25;
+    double clusterBinSizeX = 75.0;
+    double clusterBinSizeY = 75.0;
+    double clusterBinSizeYaw = 0.35;
+    double clusterMinimumBinWeightRatio = 0.05;
+    double significantClusterWeight = 0.05;
+    double dominantClusterWeight = 0.55;
+    double dominantToSecondRatio = 1.50;
+    double dominantSwitchMargin = 0.10;
+    double minimumHeadingResultant = 0.60;
+    std::size_t minimumSupportBeams = 3;
+    double minimumLikelihoodContrast = 1.02;
+    double recoveringProbabilityThreshold = 0.05;
+    double navigationDominantWeight = 0.65;
+    double navigationPositionStdDev = 30.0;
+    double navigationHeadingStdDev = 0.25;
+    std::size_t historyCapacity = 128;
 
     std::uint32_t randomSeed = 0x00C0FFEEu;
 };
