@@ -1,5 +1,6 @@
 #include "Simulator.hpp"
 
+#include <array>
 #include <cmath>
 #include <random>
 #include <vector>
@@ -469,6 +470,123 @@ int main() {
         );
         const sf::Vector2f stopped = truth.getPosition();
         return lost && !reason.empty() && samePoint(moved, stopped);
+    });
+
+    runTest(suite, "UI-LAYOUT-001", "layout remains nonnegative and non-overlapping across window sizes", [] {
+        const std::array<sf::Vector2u, 4> sizes{{
+            {1440u, 900u}, {1280u, 800u}, {1024u, 720u}, {240u, 40u}
+        }};
+        for (const sf::Vector2u size : sizes) {
+            const ApplicationLayout layout = calculateApplicationLayout(size);
+            if (layout.toolbar.size.x < 0.0f || layout.toolbar.size.y < 0.0f
+                || layout.simulationViewport.size.x < 0.0f
+                || layout.simulationViewport.size.y < 0.0f
+                || layout.inspector.size.x < 0.0f || layout.inspector.size.y < 0.0f
+                || !near(
+                    layout.simulationViewport.position.x + layout.simulationViewport.size.x,
+                    layout.inspector.position.x
+                )
+                || !near(
+                    layout.simulationViewport.size.x + layout.inspector.size.x,
+                    static_cast<float>(size.x)
+                )) {
+                return false;
+            }
+        }
+        const ApplicationLayout desktop = calculateApplicationLayout({1440u, 900u});
+        return near(desktop.inspector.size.x, 360.0f)
+            && near(desktop.simulationViewport.size.x, 1080.0f)
+            && near(desktop.toolbar.size.y, 64.0f);
+    });
+
+    runTest(suite, "UI-TOOLBAR-001", "toolbar drawing and hit testing share one button geometry", [] {
+        EditorToolbar toolbar;
+        toolbar.setBounds(sf::FloatRect(sf::Vector2f(0.0f, 0.0f), sf::Vector2f(1080.0f, 64.0f)));
+        const std::array<EditorMode, 7> modes{{
+            EditorMode::Select,
+            EditorMode::PlaceObstacle,
+            EditorMode::DeleteObstacle,
+            EditorMode::SetStartPose,
+            EditorMode::SetGoalPose,
+            EditorMode::DrawWorkZone,
+            EditorMode::PanView
+        }};
+        for (const EditorMode mode : modes) {
+            const sf::FloatRect bounds = toolbar.getButtonBounds(mode);
+            const sf::Vector2i center(
+                static_cast<int>(bounds.position.x + bounds.size.x * 0.5f),
+                static_cast<int>(bounds.position.y + bounds.size.y * 0.5f)
+            );
+            if (toolbar.hitTest(center) != std::optional<EditorMode>(mode)) {
+                return false;
+            }
+        }
+        return !toolbar.hitTest(sf::Vector2i(1079, 63)).has_value();
+    });
+
+    runTest(suite, "UI-INSPECTOR-001", "Inspector defaults to Map and persists tab selection", [] {
+        InspectorPanel panel;
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(1080.0f, 64.0f), sf::Vector2f(360.0f, 836.0f)
+        ));
+        if (panel.getActiveTab() != InspectorTab::Map) {
+            return false;
+        }
+        const sf::FloatRect navigation = panel.getTabBounds(InspectorTab::Navigation);
+        const sf::Vector2i click(
+            static_cast<int>(navigation.position.x + navigation.size.x * 0.5f),
+            static_cast<int>(navigation.position.y + navigation.size.y * 0.5f)
+        );
+        return panel.handleClick(click)
+            && panel.getActiveTab() == InspectorTab::Navigation
+            && !panel.handleClick(sf::Vector2i(100, 100))
+            && panel.getActiveTab() == InspectorTab::Navigation;
+    });
+
+    runTest(suite, "UI-INSPECTOR-002", "Inspector keeps independent deterministic tab scroll offsets", [] {
+        InspectorPanel panel;
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(1080.0f, 64.0f), sf::Vector2f(360.0f, 500.0f)
+        ));
+        panel.setContentHeight(InspectorTab::Map, 1000.0f);
+        panel.setContentHeight(InspectorTab::Navigation, 800.0f);
+        panel.scroll(1.0f);
+        const float mapOffset = panel.getScrollOffset(InspectorTab::Map);
+        const sf::FloatRect navigation = panel.getTabBounds(InspectorTab::Navigation);
+        panel.handleClick(sf::Vector2i(
+            static_cast<int>(navigation.position.x + 2.0f),
+            static_cast<int>(navigation.position.y + 2.0f)
+        ));
+        panel.scroll(1.0f);
+        panel.scroll(1.0f);
+        const float navigationOffset = panel.getScrollOffset(InspectorTab::Navigation);
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(1080.0f, 64.0f), sf::Vector2f(360.0f, 1300.0f)
+        ));
+        return near(mapOffset, 48.0f)
+            && near(navigationOffset, 96.0f)
+            && near(panel.getScrollOffset(InspectorTab::Map), 0.0f)
+            && near(panel.getScrollOffset(InspectorTab::Navigation), 0.0f);
+    });
+
+    runTest(suite, "UI-INSPECTOR-003", "small-height Inspector hides its footer instead of covering tabs", [] {
+        InspectorPanel panel;
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(320.0f, 64.0f), sf::Vector2f(360.0f, 136.0f)
+        ));
+        const sf::FloatRect tab = panel.getTabBounds(InspectorTab::Localization);
+        const sf::FloatRect body = panel.getBodyBounds();
+        const sf::FloatRect footer = panel.getFooterBounds();
+        const bool compact = footer.size.y == 0.0f
+            && body.position.y >= tab.position.y + tab.size.y;
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(1080.0f, 64.0f), sf::Vector2f(360.0f, 836.0f)
+        ));
+        const sf::FloatRect desktopBody = panel.getBodyBounds();
+        const sf::FloatRect desktopFooter = panel.getFooterBounds();
+        return compact && desktopFooter.size.y > 0.0f
+            && desktopFooter.position.y
+                >= desktopBody.position.y + desktopBody.size.y;
     });
 
     return suite.exitCode();

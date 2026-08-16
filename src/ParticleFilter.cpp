@@ -1,5 +1,7 @@
 #include "ParticleFilter.hpp"
 
+#include "LaserScanGeometry.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -244,19 +246,9 @@ SensorUpdateResult ParticleFilter::sensorUpdate(
         return result;
     }
 
-    const std::size_t selectedCount = std::min(m_config.maxBeams, scan.ranges.size());
-    std::vector<std::size_t> selectedIndices;
-    selectedIndices.reserve(selectedCount);
-    if (selectedCount == 1) {
-        selectedIndices.push_back(scan.ranges.size() / 2);
-    } else {
-        for (std::size_t selected = 0; selected < selectedCount; ++selected) {
-            const double position = static_cast<double>(selected)
-                * static_cast<double>(scan.ranges.size() - 1)
-                / static_cast<double>(selectedCount - 1);
-            selectedIndices.push_back(static_cast<std::size_t>(std::llround(position)));
-        }
-    }
+    const std::vector<std::size_t> selectedIndices = selectEvenlySpacedBeamIndices(
+        scan, m_config.maxBeams
+    );
     result.selectedBeams = selectedIndices.size();
     std::vector<std::size_t> candidateIndices;
     candidateIndices.reserve(selectedIndices.size());
@@ -311,8 +303,8 @@ SensorUpdateResult ParticleFilter::sensorUpdate(
                 pose.position.x + static_cast<float>(cosine * scan.sensorOffsetX - sine * scan.sensorOffsetY),
                 pose.position.y + static_cast<float>(sine * scan.sensorOffsetX + cosine * scan.sensorOffsetY)
             );
-            const double beamAngle = pose.heading + scan.sensorYawOffset + scan.angleMin
-                + scan.angleIncrement * static_cast<double>(scanIndex);
+            const double beamAngle = pose.heading + scan.sensorYawOffset
+                + laserScanBeamAngle(scan, scanIndex);
             const sf::Vector2f endpoint(
                 sensorOrigin.x + static_cast<float>(range * std::cos(beamAngle)),
                 sensorOrigin.y + static_cast<float>(range * std::sin(beamAngle))

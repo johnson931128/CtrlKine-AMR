@@ -7,7 +7,10 @@
 
 #include "AMR.hpp"
 #include "AmclLocalizer.hpp"
+#include "ApplicationLayout.hpp"
+#include "EditorToolbar.hpp"
 #include "Environment.hpp"
+#include "InspectorPanel.hpp"
 #include "LidarSimulator.hpp"
 #include "LocalizationConfig.hpp"
 #include "LocalizationVisualization.hpp"
@@ -45,17 +48,11 @@ void handleEditorHotkeys(const sf::Event& event);
 bool handleToolbarClick(const sf::Vector2i& pixelPos);
 
 /* UI rendering */
-void drawToolbar();
-void drawInspector();
-void drawLocalizationLegend();
 void drawActivePath();
-void drawLocalization();
-void drawLidarScan();
 
 /* UI layout and viewport management */
 void updateCursorPreview();
 void updateWindowLayout();
-void scrollInspector(float delta);
 
 /* Map persistence */
 void saveMap();
@@ -84,7 +81,6 @@ void selectObjectAt(const sf::Vector2f& worldPos);
 void clearSelection();
 bool deleteSelectedObject();
 bool rotateSelectedHeading(float deltaRadians);
-void syncSelectionToEnvironment();
 
 /* Headless runtime integration seams */
 static bool applyConfiguredStartPose(
@@ -147,11 +143,11 @@ sf::View m_simView;
 sf::View m_defaultSimView;
 
 /* Toolbar and Inspector UI resources */
-sf::RectangleShape m_toolbarBg;
-sf::RectangleShape m_inspectorBg;
-sf::RectangleShape m_divider;
 sf::Font m_uiFont;
 bool m_hasUiFont;
+ApplicationLayout m_layout;
+EditorToolbar m_toolbar;
+InspectorPanel m_inspector;
 
 /* Core simulation modules */
 AMRConfig m_amrConfig;
@@ -169,11 +165,11 @@ MapLikelihoodField m_likelihoodField;
 AmclLocalizer m_localizer;
 LaserScan m_currentScan;
 Pose2D m_scanGroundTruthPose;
-sf::VertexArray m_particleVertices;
-LocalizationViewOptions m_localizationView;
+LocalizationVisualization m_localizationVisualization;
 bool m_kidnapTestActive = false;
 NavigationMode m_navigationMode = NavigationMode::SimulationTruth;
 std::string m_planningStartSource = "Map Start";
+std::string m_navigationStatusMessage = "Idle; plan a path to begin.";
 
 /* Timing and camera interaction state */
 sf::Clock m_clock;
@@ -186,10 +182,6 @@ sf::FloatRect m_simViewportRect;
 
 /* Default reset state */
 sf::Vector2f m_defaultRobotPosition;
-
-/* Inspector scrolling state */
-float m_inspectorScrollOffset;
-float m_inspectorContentHeight;
 
 /* Map file and UI status state */
 std::string m_mapFilename;

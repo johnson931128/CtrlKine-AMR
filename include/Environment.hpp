@@ -26,9 +26,12 @@ public:
     void setEditorMode(EditorMode mode);
     EditorMode getEditorMode() const;
     void setCursorWorldPosition(const std::optional<sf::Vector2f>& worldPos);
-    void setSelectedObject(const SelectedObject& selectedObject);
 
-    void draw(sf::RenderWindow& window, const sf::View& simView);
+    void draw(
+        sf::RenderWindow& window,
+        const sf::View& simView,
+        const SelectedObject& selectedObject
+    );
     float getGridSize() const;
     bool isObstacleAt(const sf::Vector2f& worldPos) const;
     bool isInsideWorldBounds(const sf::Vector2f& worldPos) const;
@@ -47,7 +50,10 @@ private:
     void drawWorldBoundary(sf::RenderWindow& window);
     void drawObstacles(sf::RenderWindow& window);
     void drawWorkZones(sf::RenderWindow& window);
-    void drawSelectionHighlight(sf::RenderWindow& window);
+    void drawSelectionHighlight(
+        sf::RenderWindow& window,
+        const SelectedObject& selectedObject
+    );
     void drawCursorPreview(sf::RenderWindow& window);
     void drawPoseMarker(sf::RenderWindow& window, const Pose2D& pose, const sf::Color& color);
     sf::FloatRect makeRectFromPoints(const sf::Vector2f& start, const sf::Vector2f& end) const;
@@ -60,5 +66,4 @@ private:
     std::optional<sf::Vector2f> m_pendingZoneStart;
     std::optional<sf::Vector2f> m_cursorWorldPos;
     bool m_isDrawingWorkZone;
-    SelectedObject m_selectedObject;
 };

@@ -125,7 +125,7 @@ $(TEST_PATH_TARGET): $(TEST_BUILD_DIR)/PathPlannerTests.o $(TEST_BUILD_DIR)/Path
 $(TEST_EXECUTION_TARGET): $(TEST_BUILD_DIR)/PathExecutionTests.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
+$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/ApplicationLayout.o $(BUILD_DIR)/EditorToolbar.o $(BUILD_DIR)/InspectorPanel.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(TEST_LOCALIZATION_SENSOR_TARGET): $(TEST_BUILD_DIR)/LocalizationSensorTests.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o

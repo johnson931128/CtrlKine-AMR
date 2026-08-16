@@ -23,8 +23,7 @@ float normalizeAngle(float angleRadians) {
 Environment::Environment(float gridSize)
     : m_map(gridSize),
       m_editorMode(EditorMode::PlaceObstacle),
-      m_isDrawingWorkZone(false),
-      m_selectedObject(SelectedObject::none()) {}
+      m_isDrawingWorkZone(false) {}
 
 void Environment::handleLeftMousePressed(const sf::Vector2f& worldPos) {
     switch (m_editorMode) {
@@ -95,11 +94,11 @@ void Environment::setCursorWorldPosition(const std::optional<sf::Vector2f>& worl
     m_cursorWorldPos = worldPos;
 }
 
-void Environment::setSelectedObject(const SelectedObject& selectedObject) {
-    m_selectedObject = selectedObject;
-}
-
-void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
+void Environment::draw(
+    sf::RenderWindow& window,
+    const sf::View& simView,
+    const SelectedObject& selectedObject
+) {
     drawGrid(window, simView);
     drawWorldBoundary(window);
     drawWorkZones(window);
@@ -113,7 +112,7 @@ void Environment::draw(sf::RenderWindow& window, const sf::View& simView) {
         drawPoseMarker(window, *m_map.getRobotGoalPose(), sf::Color(220, 20, 60));
     }
 
-    drawSelectionHighlight(window);
+    drawSelectionHighlight(window, selectedObject);
     drawCursorPreview(window);
 }
 
@@ -218,12 +217,15 @@ void Environment::drawWorkZones(sf::RenderWindow& window) {
     }
 }
 
-void Environment::drawSelectionHighlight(sf::RenderWindow& window) {
-    switch (m_selectedObject.type) {
+void Environment::drawSelectionHighlight(
+    sf::RenderWindow& window,
+    const SelectedObject& selectedObject
+) {
+    switch (selectedObject.type) {
     case SelectedObjectType::Obstacle:
-        if (m_selectedObject.obstacleCoord.has_value()) {
+        if (selectedObject.obstacleCoord.has_value()) {
             sf::RectangleShape selectedCell(sf::Vector2f(getGridSize(), getGridSize()));
-            selectedCell.setPosition(m_map.getMapper().gridToWorldTopLeft(*m_selectedObject.obstacleCoord));
+            selectedCell.setPosition(m_map.getMapper().gridToWorldTopLeft(*selectedObject.obstacleCoord));
             selectedCell.setFillColor(sf::Color(255, 215, 0, 35));
             selectedCell.setOutlineThickness(2.0f);
             selectedCell.setOutlineColor(sf::Color(255, 165, 0));
@@ -231,9 +233,9 @@ void Environment::drawSelectionHighlight(sf::RenderWindow& window) {
         }
         break;
     case SelectedObjectType::WorkZone:
-        if (m_selectedObject.workZoneIndex.has_value()
-            && *m_selectedObject.workZoneIndex < m_map.getWorkZones().size()) {
-            const WorkZone& zone = m_map.getWorkZones()[*m_selectedObject.workZoneIndex];
+        if (selectedObject.workZoneIndex.has_value()
+            && *selectedObject.workZoneIndex < m_map.getWorkZones().size()) {
+            const WorkZone& zone = m_map.getWorkZones()[*selectedObject.workZoneIndex];
             sf::RectangleShape selectedZone(zone.bounds.size);
             selectedZone.setPosition(zone.bounds.position);
             selectedZone.setFillColor(sf::Color(255, 215, 0, 24));
@@ -244,12 +246,24 @@ void Environment::drawSelectionHighlight(sf::RenderWindow& window) {
         break;
     case SelectedObjectType::StartPose:
         if (m_map.getRobotStartPose().has_value()) {
-            drawPoseMarker(window, *m_map.getRobotStartPose(), sf::Color(255, 165, 0));
+            sf::CircleShape halo(18.0f, 32);
+            halo.setOrigin(sf::Vector2f(18.0f, 18.0f));
+            halo.setPosition(m_map.getRobotStartPose()->position);
+            halo.setFillColor(sf::Color::Transparent);
+            halo.setOutlineThickness(2.0f);
+            halo.setOutlineColor(sf::Color(255, 165, 0));
+            window.draw(halo);
         }
         break;
     case SelectedObjectType::GoalPose:
         if (m_map.getRobotGoalPose().has_value()) {
-            drawPoseMarker(window, *m_map.getRobotGoalPose(), sf::Color(255, 165, 0));
+            sf::CircleShape halo(18.0f, 32);
+            halo.setOrigin(sf::Vector2f(18.0f, 18.0f));
+            halo.setPosition(m_map.getRobotGoalPose()->position);
+            halo.setFillColor(sf::Color::Transparent);
+            halo.setOutlineThickness(2.0f);
+            halo.setOutlineColor(sf::Color(255, 165, 0));
+            window.draw(halo);
         }
         break;
     default:
@@ -359,14 +373,12 @@ bool Environment::saveMapToFile(const std::string& filename) const {
 
 bool Environment::loadMapFromFile(const std::string& filename) {
     cancelActiveTool();
-    m_selectedObject = SelectedObject::none();
     return m_map.loadFromFile(filename);
 }
 
 void Environment::clearMap() {
     cancelActiveTool();
     m_map.clear();
-    m_selectedObject = SelectedObject::none();
 }
 
 bool Environment::isDrawingWorkZone() const {

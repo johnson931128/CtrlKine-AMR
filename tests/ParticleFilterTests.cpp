@@ -829,13 +829,13 @@ int main() {
             && result.usedBeams > 0 && !result.beamSkipFallback;
     });
 
-    runTest(suite, "SENSOR-008", "particle prediction applies the same LiDAR extrinsics as simulation", [] {
+    runTest(suite, "SENSOR-008", "full-circle beam skipping applies the same LiDAR extrinsics as simulation", [] {
         MapData map = makeAsymmetricMap();
         MapLikelihoodField field;
         field.rebuild(map, 150.0);
         LidarConfig lidarConfig;
         lidarConfig.beamCount = 61;
-        lidarConfig.fieldOfView = 1.5 * kLocalizationPi;
+        lidarConfig.fieldOfView = 2.0 * kLocalizationPi;
         lidarConfig.minRange = 1.0;
         lidarConfig.maxRange = 900.0;
         lidarConfig.offsetX = 35.0;
@@ -859,6 +859,8 @@ int main() {
         const SensorUpdateResult right = correct.sensorUpdate(scan, field);
         const SensorUpdateResult wrong = zeroExtrinsic.sensorUpdate(wrongScan, field);
         return right.updated && wrong.updated
+            && right.selectedBeams == config.maxBeams
+            && right.skippedBeams == 0 && !right.beamSkipFallback
             && right.observationQuality > wrong.observationQuality;
     });
 

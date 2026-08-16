@@ -111,11 +111,12 @@ LaserScan LidarSimulator::simulate(
             ? 0.0
             : -(m_config.fieldOfView * 0.5)
     );
-    scan.angleIncrement = static_cast<float>(
-        m_config.beamCount == 1
-            ? 0.0
-            : m_config.fieldOfView / static_cast<double>(m_config.beamCount - 1)
-    );
+    const bool fullCircle = std::abs(m_config.fieldOfView - 2.0 * kLocalizationPi) <= 1e-9;
+    scan.angleIncrement = static_cast<float>(m_config.beamCount == 1
+        ? 0.0
+        : m_config.fieldOfView / static_cast<double>(
+            fullCircle ? m_config.beamCount : m_config.beamCount - 1
+        ));
     scan.minRange = static_cast<float>(m_config.minRange);
     scan.maxRange = static_cast<float>(m_config.maxRange);
     scan.sensorOffsetX = m_config.offsetX;
@@ -143,7 +144,8 @@ LaserScan LidarSimulator::simulate(
     const double gridSize = mapData.getGridResolution();
 
     for (std::size_t beam = 0; beam < m_config.beamCount; ++beam) {
-        const double relativeAngle = scan.angleMin + scan.angleIncrement * static_cast<double>(beam);
+        const double relativeAngle = scan.angleMin
+            + scan.angleIncrement * static_cast<double>(beam);
         const double worldAngle = groundTruthPose.heading + m_config.yawOffset + relativeAngle;
         const double directionX = std::cos(worldAngle);
         const double directionY = std::sin(worldAngle);

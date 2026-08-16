@@ -96,7 +96,7 @@ int main() {
         }
         std::cout << "Local stress: successes=" << successes
                   << "/10 meanFinalError=" << finalErrorSum / 10.0 << "\n";
-        return successes >= 9;
+        return successes == 10;
     });
 
     runTest(suite, "STRESS-GLOBAL", "feature-rich global localization is bounded across 10 seeds", [] {
@@ -251,7 +251,7 @@ int main() {
             }
         }
         std::cout << "Kidnapped stress: successes=" << successes << "/5\n";
-        return successes >= 4;
+        return successes == 5;
     });
 
     return suite.exitCode();

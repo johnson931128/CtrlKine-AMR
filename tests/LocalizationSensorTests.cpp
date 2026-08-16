@@ -1,10 +1,12 @@
 #include "LidarSimulator.hpp"
+#include "LaserScanGeometry.hpp"
 #include "MapLikelihoodField.hpp"
 #include "OdometrySimulator.hpp"
 #include "LocalizationVisualization.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <stdexcept>
 
@@ -271,6 +273,165 @@ int main() {
             && std::all_of(scan.ranges.begin(), scan.ranges.end(), [](float range) {
                 return std::isnan(range);
             });
+    });
+
+    runTest(suite, "LIDAR-012", "default scan uses full-circle unique-seam metadata", [] {
+        const LidarConfig config;
+        MapData map = makeMap();
+        std::mt19937 engine(12);
+        const LaserScan scan = LidarSimulator(config).simulate(
+            Pose2D{sf::Vector2f(250.0f, 250.0f), 0.0f}, map, engine
+        );
+        const double finalAngle = laserScanBeamAngle(scan, scan.ranges.size() - 1);
+        return near(config.fieldOfView, 2.0 * kLocalizationPi, 1e-9)
+            && scan.ranges.size() == config.beamCount
+            && isFullCircleScan(scan)
+            && near(
+                scan.angleIncrement * static_cast<double>(scan.ranges.size()),
+                2.0 * kLocalizationPi,
+                1e-5
+            )
+            && finalAngle < scan.angleMin + 2.0 * kLocalizationPi
+            && !near(finalAngle, scan.angleMin, 1e-5);
+    });
+
+    runTest(suite, "LIDAR-013", "four-beam full scan covers each cardinal direction once", [] {
+        MapData map = makeMap();
+        LidarConfig config;
+        config.beamCount = 4;
+        config.fieldOfView = 2.0 * kLocalizationPi;
+        config.minRange = 0.0;
+        config.maxRange = 1000.0;
+        config.rangeNoiseStdDev = 0.0;
+        std::mt19937 engine(13);
+        const LaserScan scan = LidarSimulator(config).simulate(
+            Pose2D{sf::Vector2f(100.0f, 200.0f), 0.0f}, map, engine
+        );
+        return scan.ranges.size() == 4
+            && near(scan.angleMin, -kLocalizationPi, 1e-5)
+            && near(scan.angleIncrement, kLocalizationPi / 2.0, 1e-5)
+            && near(scan.ranges[0], 100.0)
+            && near(scan.ranges[1], 200.0)
+            && near(scan.ranges[2], 400.0)
+            && near(scan.ranges[3], 300.0);
+    });
+
+    runTest(suite, "LIDAR-014", "heading and yaw rotate full-circle beam geometry consistently", [] {
+        MapData map = makeMap();
+        LidarConfig config;
+        config.beamCount = 4;
+        config.fieldOfView = 2.0 * kLocalizationPi;
+        config.minRange = 0.0;
+        config.maxRange = 1000.0;
+        config.rangeNoiseStdDev = 0.0;
+        std::mt19937 headingEngine(14);
+        const LaserScan headingScan = LidarSimulator(config).simulate(
+            Pose2D{
+                sf::Vector2f(100.0f, 200.0f),
+                static_cast<float>(kLocalizationPi / 2.0)
+            },
+            map,
+            headingEngine
+        );
+        config.yawOffset = kLocalizationPi / 2.0;
+        std::mt19937 yawEngine(14);
+        const LaserScan yawScan = LidarSimulator(config).simulate(
+            Pose2D{sf::Vector2f(100.0f, 200.0f), 0.0f}, map, yawEngine
+        );
+        return headingScan.ranges == yawScan.ranges
+            && near(headingScan.ranges[0], 200.0)
+            && near(headingScan.ranges[1], 400.0)
+            && near(headingScan.ranges[2], 300.0)
+            && near(headingScan.ranges[3], 100.0);
+    });
+
+    runTest(suite, "LIDAR-015", "translated and rotated sensor extrinsics share one full-scan transform", [] {
+        MapData map = makeMap();
+        LidarConfig config;
+        config.beamCount = 4;
+        config.fieldOfView = 2.0 * kLocalizationPi;
+        config.minRange = 0.0;
+        config.maxRange = 1000.0;
+        config.offsetX = 25.0;
+        config.offsetY = -50.0;
+        config.yawOffset = kLocalizationPi / 2.0;
+        config.rangeNoiseStdDev = 0.0;
+        std::mt19937 engine(15);
+        const LaserScan scan = LidarSimulator(config).simulate(
+            Pose2D{
+                sf::Vector2f(100.0f, 200.0f),
+                static_cast<float>(kLocalizationPi / 2.0)
+            },
+            map,
+            engine
+        );
+        return near(scan.sensorOffsetX, 25.0)
+            && near(scan.sensorOffsetY, -50.0)
+            && near(scan.sensorYawOffset, kLocalizationPi / 2.0)
+            && near(scan.ranges[0], 350.0)
+            && near(scan.ranges[1], 275.0);
+    });
+
+    runTest(suite, "LIDAR-016", "cyclic beam selection is uniform and omits the seam duplicate", [] {
+        LaserScan scan;
+        scan.ranges.assign(8, 100.0f);
+        scan.angleMin = static_cast<float>(-kLocalizationPi);
+        scan.angleIncrement = static_cast<float>(2.0 * kLocalizationPi / 8.0);
+        scan.minRange = 0.0f;
+        scan.maxRange = 200.0f;
+        const std::vector<std::size_t> selected = selectEvenlySpacedBeamIndices(scan, 4);
+        return selected == std::vector<std::size_t>({0, 2, 4, 6})
+            && std::adjacent_find(selected.begin(), selected.end()) == selected.end();
+    });
+
+    runTest(suite, "LIDAR-017", "eight-beam full scan includes distinct cardinal and diagonal rays", [] {
+        MapData map = makeMap();
+        LidarConfig config;
+        config.beamCount = 8;
+        config.fieldOfView = 2.0 * kLocalizationPi;
+        config.minRange = 0.0;
+        config.maxRange = 1000.0;
+        config.rangeNoiseStdDev = 0.0;
+        std::mt19937 engine(17);
+        const LaserScan scan = LidarSimulator(config).simulate(
+            Pose2D{sf::Vector2f(250.0f, 250.0f), 0.0f}, map, engine
+        );
+        const double diagonal = std::sqrt(2.0 * 250.0 * 250.0);
+        for (std::size_t index = 0; index < scan.ranges.size(); ++index) {
+            const double expected = index % 2 == 0 ? 250.0 : diagonal;
+            if (!near(scan.ranges[index], expected, 0.01)) {
+                return false;
+            }
+        }
+        return isFullCircleScan(scan)
+            && laserScanBeamAngle(scan, 7) < scan.angleMin + 2.0 * kLocalizationPi;
+    });
+
+    runTest(suite, "VIS-002", "full-circle rendering selection is bounded and cyclic", [] {
+        LaserScan scan;
+        scan.ranges.assign(91, 100.0f);
+        scan.angleMin = static_cast<float>(-kLocalizationPi);
+        scan.angleIncrement = static_cast<float>(2.0 * kLocalizationPi / 91.0);
+        scan.minRange = 0.0f;
+        scan.maxRange = 200.0f;
+        const LocalizationViewOptions view;
+        const std::vector<std::size_t> rendered = selectEvenlySpacedBeamIndices(
+            scan, view.renderedRayCount
+        );
+        return rendered.size() == view.renderedRayCount
+            && rendered.front() == 0
+            && rendered.back() < scan.ranges.size() - 1
+            && std::adjacent_find(rendered.begin(), rendered.end()) == rendered.end();
+    });
+
+    runTest(suite, "VIS-003", "LiDAR hit presentation excludes max-range no-return beams", [] {
+        LaserScan scan;
+        scan.minRange = 5.0f;
+        scan.maxRange = 100.0f;
+        return isLaserReturnHit(scan, 5.0)
+            && isLaserReturnHit(scan, 99.0)
+            && !isLaserReturnHit(scan, 100.0)
+            && !isLaserReturnHit(scan, std::numeric_limits<double>::quiet_NaN());
     });
 
     runTest(suite, "COV-001", "covariance ellipse uses stable eigen decomposition", [] {

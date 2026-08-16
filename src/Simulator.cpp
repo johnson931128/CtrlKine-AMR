@@ -4,82 +4,21 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <utility>
 #include <vector>
 
 namespace {
-constexpr unsigned int kWindowWidth = 1280;
-constexpr unsigned int kWindowHeight = 800;
+constexpr unsigned int kWindowWidth = 1440;
+constexpr unsigned int kWindowHeight = 900;
 constexpr float kToolbarHeight = 64.0f;
-constexpr float kInspectorWidth = 260.0f;
-constexpr float kToolbarButtonWidth = 42.0f;
-constexpr float kToolbarButtonHeight = 30.0f;
-constexpr float kToolbarButtonGap = 8.0f;
-constexpr float kToolbarButtonStartX = 16.0f;
-constexpr float kToolbarButtonY = 16.0f;
 constexpr float kHeadingStepRadians = 0.17453292f;
-constexpr float kInspectorPadding = 16.0f;
-constexpr float kInspectorSectionGap = 18.0f;
-constexpr float kInspectorTitleGap = 10.0f;
-constexpr float kInspectorScrollStep = 48.0f;
 const sf::Vector2f kDefaultRobotPosition(400.0f, 400.0f);
 const sf::Color kPathColor(30, 144, 255, 220);
-const sf::Color kParticleColor(138, 43, 226, 90);
-const sf::Color kEstimateColor(255, 20, 147, 230);
-const sf::Color kLidarColor(0, 170, 190, 45);
-const sf::Color kOdometryColor(255, 140, 0, 220);
 
 Pose2D getAmrPose(const AMR& amr) {
     return Pose2D{amr.getPosition(), amr.getHeading()};
-}
-
-std::string toLocalizationStateLabel(LocalizationState state) {
-    switch (state) {
-    case LocalizationState::Tracking:
-        return "Tracking";
-    case LocalizationState::Ambiguous:
-        return "Ambiguous";
-    case LocalizationState::Converged:
-        return "Converged";
-    case LocalizationState::Recovering:
-        return "Recovering";
-    case LocalizationState::Uninitialized:
-    default:
-        return "Uninitialized";
-    }
-}
-
-std::string toLocalizationSupportLabel(LocalizationSupport support) {
-    switch (support) {
-    case LocalizationSupport::Good: return "Good";
-    case LocalizationSupport::Weak: return "Weak";
-    case LocalizationSupport::Insufficient:
-    default: return "Insufficient";
-    }
-}
-
-std::string toLocalizationInitializationLabel(LocalizationInitialization initialization) {
-    switch (initialization) {
-    case LocalizationInitialization::Local: return "Local";
-    case LocalizationInitialization::Global: return "Global";
-    case LocalizationInitialization::None:
-    default: return "None";
-    }
-}
-
-std::string toPathExecutionLabel(PathExecutionState state) {
-    switch (state) {
-    case PathExecutionState::Following:
-        return "following";
-    case PathExecutionState::Completed:
-        return "completed";
-    case PathExecutionState::NotFollowing:
-    default:
-        return "not following";
-    }
 }
 
 bool loadUiFont(sf::Font& font) {
@@ -111,78 +50,6 @@ std::string toValidationLabel(ValidationStatus status) {
     }
 }
 
-sf::Color getValidationColor(ValidationStatus status) {
-    switch (status) {
-    case ValidationStatus::Valid:
-        return sf::Color(46, 139, 87);
-    case ValidationStatus::Warning:
-        return sf::Color(184, 134, 11);
-    case ValidationStatus::Error:
-    default:
-        return sf::Color(178, 34, 34);
-    }
-}
-
-std::vector<std::string> splitWrappedLine(
-    const std::string& text,
-    const sf::Font& font,
-    unsigned int characterSize,
-    float maxWidth
-) {
-    std::vector<std::string> lines;
-    if (text.empty()) {
-        lines.push_back("");
-        return lines;
-    }
-
-    sf::Text measure(font, "", characterSize);
-    std::istringstream words(text);
-    std::string word;
-    std::string currentLine;
-
-    while (words >> word) {
-        const std::string candidate = currentLine.empty() ? word : currentLine + " " + word;
-        measure.setString(candidate);
-        if (!currentLine.empty() && measure.getLocalBounds().size.x > maxWidth) {
-            lines.push_back(currentLine);
-            currentLine = word;
-            continue;
-        }
-        currentLine = candidate;
-    }
-
-    if (!currentLine.empty()) {
-        lines.push_back(currentLine);
-    }
-
-    if (lines.empty()) {
-        lines.push_back(text);
-    }
-
-    return lines;
-}
-
-std::vector<std::string> wrapTextLines(
-    const std::string& text,
-    const sf::Font& font,
-    unsigned int characterSize,
-    float maxWidth
-) {
-    std::vector<std::string> lines;
-    std::istringstream input(text);
-    std::string rawLine;
-
-    while (std::getline(input, rawLine)) {
-        const std::vector<std::string> wrapped = splitWrappedLine(rawLine, font, characterSize, maxWidth);
-        lines.insert(lines.end(), wrapped.begin(), wrapped.end());
-    }
-
-    if (lines.empty()) {
-        lines.push_back("");
-    }
-
-    return lines;
-}
 }
 
 Simulator::Simulator()
@@ -200,10 +67,8 @@ Simulator::Simulator()
       m_localizer(m_amclConfig),
       m_isPanning(false),
       m_lastPanPixel({0, 0}),
-      m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(kWindowWidth - kInspectorWidth, kWindowHeight - kToolbarHeight)),
+      m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(1080.0f, 836.0f)),
       m_defaultRobotPosition(kDefaultRobotPosition),
-      m_inspectorScrollOffset(0.0f),
-      m_inspectorContentHeight(0.0f),
       m_mapFilename("saved_map.txt"),
       m_statusMessage("Ready"),
       m_selectedObject(SelectedObject::none()) {
@@ -220,7 +85,6 @@ Simulator::Simulator()
     updateWindowLayout();
 
     m_pathVertices.setPrimitiveType(sf::PrimitiveType::LineStrip);
-    m_particleVertices.setPrimitiveType(sf::PrimitiveType::Points);
     PathResult initialPathResult;
     initialPathResult.message = "Path planning has not run yet.";
     m_pathExecution.install(std::move(initialPathResult));
@@ -247,8 +111,8 @@ void Simulator::loadLocalizationConfig(const std::string& filename) {
 
 void Simulator::updateWindowLayout() {
     const sf::Vector2u windowSize = m_window.getSize();
-    const float windowWidth = static_cast<float>(windowSize.x);
-    const float windowHeight = static_cast<float>(windowSize.y);
+    const float windowWidth = std::max(1.0f, static_cast<float>(windowSize.x));
+    const float windowHeight = std::max(1.0f, static_cast<float>(windowSize.y));
 
     const float previousDefaultWidth = m_defaultSimView.getSize().x > 0.0f ? m_defaultSimView.getSize().x : m_simView.getSize().x;
     const float zoomFactor = previousDefaultWidth > 0.0f ? (m_simView.getSize().x / previousDefaultWidth) : 1.0f;
@@ -259,12 +123,13 @@ void Simulator::updateWindowLayout() {
         sf::Vector2f(windowWidth, windowHeight)
     );
 
-    m_simViewportRect = sf::FloatRect(
-        sf::Vector2f(0.0f, kToolbarHeight),
-        sf::Vector2f(windowWidth - kInspectorWidth, windowHeight - kToolbarHeight)
-    );
+    m_layout = calculateApplicationLayout(windowSize);
+    m_simViewportRect = m_layout.simulationViewport;
 
-    const sf::Vector2f defaultSimSize(m_simViewportRect.size.x, m_simViewportRect.size.y);
+    const sf::Vector2f defaultSimSize(
+        std::max(1.0f, m_simViewportRect.size.x),
+        std::max(1.0f, m_simViewportRect.size.y)
+    );
     m_defaultSimView = sf::View(sf::Vector2f(400.0f, 400.0f), defaultSimSize);
     m_simView.setCenter(currentCenter);
     m_simView.setSize(sf::Vector2f(defaultSimSize.x * zoomFactor, defaultSimSize.y * zoomFactor));
@@ -273,25 +138,9 @@ void Simulator::updateWindowLayout() {
         {m_simViewportRect.size.x / windowWidth, m_simViewportRect.size.y / windowHeight}
     ));
 
-    m_toolbarBg.setSize(sf::Vector2f(windowWidth, kToolbarHeight));
-    m_toolbarBg.setPosition(sf::Vector2f(0.0f, 0.0f));
-    m_toolbarBg.setFillColor(sf::Color(236, 236, 236));
+    m_toolbar.setBounds(m_layout.toolbar);
 
-    m_inspectorBg.setSize(sf::Vector2f(kInspectorWidth, windowHeight - kToolbarHeight));
-    m_inspectorBg.setPosition(sf::Vector2f(windowWidth - kInspectorWidth, kToolbarHeight));
-    m_inspectorBg.setFillColor(sf::Color(244, 244, 244));
-
-    m_divider.setSize(sf::Vector2f(2.0f, windowHeight));
-    m_divider.setPosition(sf::Vector2f(windowWidth - kInspectorWidth, 0.0f));
-    m_divider.setFillColor(sf::Color(150, 150, 150));
-
-    scrollInspector(0.0f);
-}
-
-void Simulator::scrollInspector(float delta) {
-    const float visibleHeight = m_inspectorBg.getSize().y;
-    const float maxScroll = std::max(0.0f, m_inspectorContentHeight - visibleHeight);
-    m_inspectorScrollOffset = std::clamp(m_inspectorScrollOffset + delta, 0.0f, maxScroll);
+    m_inspector.setBounds(m_layout.inspector);
 }
 
 void Simulator::loadConfig(const std::string& filename) {
@@ -366,6 +215,7 @@ void Simulator::resetRobotPose() {
     resetLocalizationForCurrentPose(m_env.getMapData().getRobotStartPose().has_value());
     updateValidationResult();
     m_statusMessage = "Reset robot pose";
+    m_navigationStatusMessage = "Robot reset; plan a new path.";
 }
 
 bool Simulator::synchronizeRobotToStartPose() {
@@ -659,9 +509,7 @@ void Simulator::updateLocalization() {
 }
 
 void Simulator::rebuildLocalizationVisualization() {
-    m_particleVertices = buildParticleVertices(
-        m_localizer.getParticles(), m_localizationView, kParticleColor
-    );
+    m_localizationVisualization.rebuildParticles(m_localizer.getParticles());
 }
 
 void Simulator::runPathPlanning() {
@@ -678,6 +526,7 @@ void Simulator::runPathPlanning() {
             m_pathExecution.install(std::move(result));
             rebuildPathVisualization();
             m_statusMessage = "Planning blocked: localization not reliable";
+            m_navigationStatusMessage = m_pathExecution.getResult().message;
             return;
         }
         m_planningStartSource = "AMCL Estimate";
@@ -688,6 +537,7 @@ void Simulator::runPathPlanning() {
         m_pathExecution.install(std::move(result));
         rebuildPathVisualization();
         m_statusMessage = "Planning blocked";
+        m_navigationStatusMessage = m_pathExecution.getResult().message;
         return;
     }
 
@@ -709,11 +559,13 @@ void Simulator::runPathPlanning() {
     m_pathExecution.install(std::move(result));
     rebuildPathVisualization();
     m_statusMessage = m_pathExecution.getResult().message;
+    m_navigationStatusMessage = m_pathExecution.getResult().message;
 }
 
 void Simulator::clearPathExecution() {
     m_pathExecution.clear();
     m_pathVertices.clear();
+    m_navigationStatusMessage = "Path cleared; plan a new path.";
 }
 
 void Simulator::rebuildPathVisualization() {
@@ -765,6 +617,7 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
                 m_statusMessage = m_navigationMode == NavigationMode::LocalizationDriven
                     ? "Navigation mode: Localization-Driven"
                     : "Navigation mode: Simulation Truth";
+                m_navigationStatusMessage = "Navigation mode changed; plan a new path.";
                 return;
             default:
                 break;
@@ -773,26 +626,33 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
 
         switch (keyPressed->code) {
         case sf::Keyboard::Key::F1:
-            m_localizationView.particles = !m_localizationView.particles;
+            m_localizationVisualization.getOptions().particles =
+                !m_localizationVisualization.getOptions().particles;
             rebuildLocalizationVisualization();
             break;
         case sf::Keyboard::Key::F2:
-            m_localizationView.lidarRays = !m_localizationView.lidarRays;
+            m_localizationVisualization.getOptions().lidarRays =
+                !m_localizationVisualization.getOptions().lidarRays;
             break;
         case sf::Keyboard::Key::F3:
-            m_localizationView.lidarHitPoints = !m_localizationView.lidarHitPoints;
+            m_localizationVisualization.getOptions().lidarHitPoints =
+                !m_localizationVisualization.getOptions().lidarHitPoints;
             break;
         case sf::Keyboard::Key::F4:
-            m_localizationView.estimate = !m_localizationView.estimate;
+            m_localizationVisualization.getOptions().estimate =
+                !m_localizationVisualization.getOptions().estimate;
             break;
         case sf::Keyboard::Key::F6:
-            m_localizationView.covariance = !m_localizationView.covariance;
+            m_localizationVisualization.getOptions().covariance =
+                !m_localizationVisualization.getOptions().covariance;
             break;
         case sf::Keyboard::Key::F7:
-            m_localizationView.odometry = !m_localizationView.odometry;
+            m_localizationVisualization.getOptions().odometry =
+                !m_localizationVisualization.getOptions().odometry;
             break;
         case sf::Keyboard::Key::F8:
-            m_localizationView.diagnostics = !m_localizationView.diagnostics;
+            m_localizationVisualization.getOptions().diagnostics =
+                !m_localizationVisualization.getOptions().diagnostics;
             break;
         case sf::Keyboard::Key::Num1:
         case sf::Keyboard::Key::S:
@@ -867,30 +727,12 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
 }
 
 bool Simulator::handleToolbarClick(const sf::Vector2i& pixelPos) {
-    const std::array<EditorMode, 7> modes = {{
-        EditorMode::Select,
-        EditorMode::PlaceObstacle,
-        EditorMode::DeleteObstacle,
-        EditorMode::SetStartPose,
-        EditorMode::SetGoalPose,
-        EditorMode::DrawWorkZone,
-        EditorMode::PanView
-    }};
-
-    for (std::size_t i = 0; i < modes.size(); ++i) {
-        const float x = kToolbarButtonStartX + static_cast<float>(i) * (kToolbarButtonWidth + kToolbarButtonGap);
-        const sf::FloatRect buttonRect(
-            sf::Vector2f(x, kToolbarButtonY),
-            sf::Vector2f(kToolbarButtonWidth, kToolbarButtonHeight)
-        );
-
-        if (buttonRect.contains(sf::Vector2f(static_cast<float>(pixelPos.x), static_cast<float>(pixelPos.y)))) {
-            m_env.setEditorMode(modes[i]);
-            m_statusMessage = "Switched mode";
-            return true;
-        }
+    const std::optional<EditorMode> mode = m_toolbar.hitTest(pixelPos);
+    if (mode.has_value()) {
+        m_env.setEditorMode(*mode);
+        m_statusMessage = "Switched mode";
+        return true;
     }
-
     return false;
 }
 
@@ -901,13 +743,11 @@ void Simulator::selectObjectAt(const sf::Vector2f& worldPos) {
     }
 
     m_selectedObject = selectedObject;
-    syncSelectionToEnvironment();
     m_statusMessage = m_selectedObject.isNone() ? "Selection cleared" : "Selected object";
 }
 
 void Simulator::clearSelection() {
     m_selectedObject = SelectedObject::none();
-    syncSelectionToEnvironment();
 }
 
 bool Simulator::deleteSelectedObject() {
@@ -939,10 +779,6 @@ bool Simulator::rotateSelectedHeading(float deltaRadians) {
         synchronizeRobotToStartPose();
     }
     return rotated;
-}
-
-void Simulator::syncSelectionToEnvironment() {
-    m_env.setSelectedObject(m_selectedObject);
 }
 
 void Simulator::updateCursorPreview() {
@@ -986,18 +822,11 @@ void Simulator::processEvents() {
         }
 
         if (const auto* scroll = event->getIf<sf::Event::MouseWheelScrolled>()) {
-            const sf::Vector2i mousePos = sf::Mouse::getPosition(m_window);
-            const bool insideInspector = mousePos.x >= static_cast<int>(m_inspectorBg.getPosition().x)
-                && mousePos.x < static_cast<int>(m_inspectorBg.getPosition().x + m_inspectorBg.getSize().x)
-                && mousePos.y >= static_cast<int>(m_inspectorBg.getPosition().y)
-                && mousePos.y < static_cast<int>(m_inspectorBg.getPosition().y + m_inspectorBg.getSize().y);
-
-            if (insideInspector) {
-                scrollInspector(scroll->delta > 0 ? -kInspectorScrollStep : kInspectorScrollStep);
-            } else if (mousePos.x >= static_cast<int>(m_simViewportRect.position.x)
-                && mousePos.x < static_cast<int>(m_simViewportRect.position.x + m_simViewportRect.size.x)
-                && mousePos.y >= static_cast<int>(m_simViewportRect.position.y)
-                && mousePos.y < static_cast<int>(m_simViewportRect.position.y + m_simViewportRect.size.y)) {
+            const sf::Vector2i mousePos = scroll->position;
+            if (m_inspector.contains(mousePos)) {
+                m_inspector.scroll(scroll->delta > 0 ? -1.0f : 1.0f);
+            } else if (m_simViewportRect.contains(sf::Vector2f(
+                    static_cast<float>(mousePos.x), static_cast<float>(mousePos.y)))) {
                 if (scroll->delta > 0) m_simView.zoom(0.9f);
                 else if (scroll->delta < 0) m_simView.zoom(1.1f);
             }
@@ -1005,8 +834,13 @@ void Simulator::processEvents() {
 
         if (const auto* mouseBtn = event->getIf<sf::Event::MouseButtonPressed>()) {
             if (mouseBtn->button == sf::Mouse::Button::Left
-                && mouseBtn->position.y >= 0
-                && mouseBtn->position.y < static_cast<int>(kToolbarHeight)
+                && m_inspector.handleClick(mouseBtn->position)) {
+                continue;
+            }
+            if (mouseBtn->button == sf::Mouse::Button::Left
+                && m_toolbar.getBounds().contains(sf::Vector2f(
+                    static_cast<float>(mouseBtn->position.x),
+                    static_cast<float>(mouseBtn->position.y)))
                 && handleToolbarClick(mouseBtn->position)) {
                 continue;
             }
@@ -1031,8 +865,6 @@ void Simulator::processEvents() {
                             && m_selectedObject.obstacleCoord == deletedObject.obstacleCoord
                             && m_selectedObject.workZoneIndex == deletedObject.workZoneIndex) {
                             clearSelection();
-                        } else {
-                            syncSelectionToEnvironment();
                         }
                         updateValidationResult();
                         m_statusMessage = "Deleted object";
@@ -1100,6 +932,7 @@ void Simulator::update(float dt) {
                 m_localizer.getEstimate(), m_localizer.getStatistics(), m_amclConfig, reason)) {
             clearPathExecution();
             m_statusMessage = "Execution stopped: localization lost. " + reason;
+            m_navigationStatusMessage = m_statusMessage;
             wasFollowing = false;
         }
     }
@@ -1170,6 +1003,7 @@ void Simulator::update(float dt) {
         m_pathExecution.advanceWaypoint();
         if (m_pathExecution.getState() == PathExecutionState::Completed) {
             m_statusMessage = "Path following completed.";
+            m_navigationStatusMessage = m_statusMessage;
         }
     }
 
@@ -1187,9 +1021,15 @@ void Simulator::render() {
     m_window.clear(sf::Color(245, 245, 245));
 
     m_window.setView(m_simView);
-    m_env.draw(m_window, m_simView);
-    drawLidarScan();
-    drawLocalization();
+    m_env.draw(m_window, m_simView, m_selectedObject);
+    m_localizationVisualization.drawScan(m_window, m_currentScan, m_scanGroundTruthPose);
+    m_localizationVisualization.drawBelief(
+        m_window,
+        m_localizer.getEstimate(),
+        m_localizer.getStatistics(),
+        m_odometrySimulator.getOdometryPose(),
+        m_odometrySimulator.isInitialized()
+    );
     drawActivePath();
     m_amr.draw(m_window);
 
@@ -1204,153 +1044,30 @@ void Simulator::render() {
     }
 
     m_window.setView(m_uiView);
-    drawToolbar();
-    drawInspector();
-    drawLocalizationLegend();
+    m_toolbar.draw(m_window, m_uiFont, m_hasUiFont, m_env.getEditorMode());
+    const InspectorData inspectorData{
+        m_env.getMapData(),
+        m_amr,
+        m_validationResult,
+        m_pathExecution,
+        m_selectedObject,
+        m_hoverWorldPos,
+        m_localizer.getEstimate(),
+        m_localizer.getStatistics(),
+        m_odometrySimulator.getOdometryPose(),
+        m_odometrySimulator.isInitialized(),
+        getAmrPose(m_amr),
+        m_localizationVisualization.getOptions(),
+        m_localizer.getHistory().size(),
+        m_navigationMode == NavigationMode::LocalizationDriven,
+        m_planningStartSource,
+        m_statusMessage,
+        m_navigationStatusMessage,
+        m_kidnapTestActive
+    };
+    m_inspector.draw(m_window, m_uiFont, m_hasUiFont, inspectorData);
 
     m_window.display();
-}
-
-void Simulator::drawLidarScan() {
-    if (m_currentScan.ranges.empty()
-        || (!m_localizationView.lidarRays && !m_localizationView.lidarHitPoints)) {
-        return;
-    }
-
-    const std::size_t maximumRenderedRays = std::max<std::size_t>(
-        1, m_localizationView.renderedRayCount
-    );
-    const std::size_t stride = std::max<std::size_t>(
-        1,
-        (m_currentScan.ranges.size() + maximumRenderedRays - 1) / maximumRenderedRays
-    );
-    sf::VertexArray rays(sf::PrimitiveType::Lines);
-    sf::VertexArray hits(sf::PrimitiveType::Points);
-    const double cosine = std::cos(m_scanGroundTruthPose.heading);
-    const double sine = std::sin(m_scanGroundTruthPose.heading);
-    const sf::Vector2f sensorOrigin(
-        m_scanGroundTruthPose.position.x + static_cast<float>(
-            cosine * m_currentScan.sensorOffsetX - sine * m_currentScan.sensorOffsetY
-        ),
-        m_scanGroundTruthPose.position.y + static_cast<float>(
-            sine * m_currentScan.sensorOffsetX + cosine * m_currentScan.sensorOffsetY
-        )
-    );
-    for (std::size_t beam = 0; beam < m_currentScan.ranges.size(); beam += stride) {
-        const double range = m_currentScan.ranges[beam];
-        if (!std::isfinite(range)) {
-            continue;
-        }
-        const double angle = m_scanGroundTruthPose.heading
-            + m_currentScan.sensorYawOffset
-            + m_currentScan.angleMin
-            + m_currentScan.angleIncrement * static_cast<double>(beam);
-        const sf::Vector2f endpoint(
-            sensorOrigin.x + static_cast<float>(range * std::cos(angle)),
-            sensorOrigin.y + static_cast<float>(range * std::sin(angle))
-        );
-        const bool maximumRange = range >= m_currentScan.maxRange;
-        if (m_localizationView.lidarRays) {
-            const sf::Color rayColor = maximumRange
-                ? sf::Color(110, 150, 160, 22)
-                : kLidarColor;
-            rays.append(sf::Vertex{sensorOrigin, sf::Color(rayColor.r, rayColor.g, rayColor.b, 12)});
-            rays.append(sf::Vertex{endpoint, rayColor});
-        }
-        if (m_localizationView.lidarHitPoints) {
-            hits.append(sf::Vertex{
-                endpoint,
-                maximumRange ? sf::Color(120, 120, 120, 110) : sf::Color(0, 150, 180, 210)
-            });
-        }
-    }
-    if (m_localizationView.lidarRays) m_window.draw(rays);
-    if (m_localizationView.lidarHitPoints) m_window.draw(hits);
-}
-
-void Simulator::drawLocalization() {
-    if (m_localizationView.particles && m_particleVertices.getVertexCount() > 0) {
-        m_window.draw(m_particleVertices);
-    }
-
-    if (m_localizationView.odometry && m_odometrySimulator.isInitialized()) {
-        const Pose2D& odometry = m_odometrySimulator.getOdometryPose();
-        sf::CircleShape odometryMarker(8.0f, 3);
-        odometryMarker.setOrigin(sf::Vector2f(8.0f, 8.0f));
-        odometryMarker.setPosition(odometry.position);
-        odometryMarker.setRotation(sf::radians(
-            odometry.heading + static_cast<float>(kLocalizationPi / 2.0)
-        ));
-        odometryMarker.setFillColor(sf::Color::Transparent);
-        odometryMarker.setOutlineThickness(2.0f);
-        odometryMarker.setOutlineColor(kOdometryColor);
-        m_window.draw(odometryMarker);
-    }
-
-    const LocalizationEstimate& estimate = m_localizer.getEstimate();
-    const LocalizationStatistics& statistics = m_localizer.getStatistics();
-    if (!estimate.valid) {
-        return;
-    }
-
-    if (m_localizationView.covariance) {
-        const CovarianceEllipse ellipse = covarianceEllipse(estimate.covariance);
-        if (ellipse.valid && ellipse.majorRadius > 0.0 && ellipse.minorRadius > 0.0) {
-            constexpr std::size_t kSegments = 48;
-            sf::VertexArray outline(sf::PrimitiveType::LineStrip, kSegments + 1);
-            const sf::Color covarianceColor = statistics.state == LocalizationState::Recovering
-                ? sf::Color(255, 140, 0, 150)
-                : statistics.state == LocalizationState::Ambiguous
-                    ? sf::Color(210, 150, 30, 130)
-                    : sf::Color(255, 20, 147, 120);
-            for (std::size_t index = 0; index <= kSegments; ++index) {
-                const double angle = 2.0 * kLocalizationPi * static_cast<double>(index)
-                    / static_cast<double>(kSegments);
-                const double localX = ellipse.majorRadius * std::cos(angle);
-                const double localY = ellipse.minorRadius * std::sin(angle);
-                const double rotatedX = localX * std::cos(ellipse.rotation)
-                    - localY * std::sin(ellipse.rotation);
-                const double rotatedY = localX * std::sin(ellipse.rotation)
-                    + localY * std::cos(ellipse.rotation);
-                outline[index] = sf::Vertex{
-                    estimate.pose.position + sf::Vector2f(
-                        static_cast<float>(rotatedX), static_cast<float>(rotatedY)
-                    ),
-                    covarianceColor
-                };
-            }
-            m_window.draw(outline);
-        }
-    }
-
-    if (!m_localizationView.estimate) {
-        return;
-    }
-
-    sf::CircleShape marker(9.0f, 24);
-    marker.setOrigin(sf::Vector2f(9.0f, 9.0f));
-    marker.setPosition(estimate.pose.position);
-    marker.setFillColor(sf::Color::Transparent);
-    marker.setOutlineThickness(statistics.state == LocalizationState::Converged ? 3.0f : 2.0f);
-    const sf::Color estimateColor = statistics.state == LocalizationState::Recovering
-        ? sf::Color(255, 140, 0, 210)
-        : statistics.state == LocalizationState::Ambiguous
-            ? sf::Color(210, 150, 30, 180)
-            : statistics.state == LocalizationState::Tracking
-                ? sf::Color(255, 20, 147, 120)
-                : kEstimateColor;
-    marker.setOutlineColor(estimateColor);
-    m_window.draw(marker);
-
-    const sf::Vector2f headingEnd(
-        estimate.pose.position.x + std::cos(estimate.pose.heading) * 30.0f,
-        estimate.pose.position.y + std::sin(estimate.pose.heading) * 30.0f
-    );
-    sf::VertexArray heading(sf::PrimitiveType::Lines, 2);
-    heading[0] = sf::Vertex{estimate.pose.position, estimateColor};
-    heading[1] = sf::Vertex{headingEnd, estimateColor};
-    m_window.draw(heading);
-
 }
 
 void Simulator::drawActivePath() {
@@ -1371,363 +1088,4 @@ void Simulator::drawActivePath() {
         waypointMarker.setPosition(mapper.gridToWorldCenter(cell));
         m_window.draw(waypointMarker);
     }
-}
-
-void Simulator::drawToolbar() {
-    m_window.draw(m_toolbarBg);
-
-    if (!m_hasUiFont) {
-        return;
-    }
-
-    const std::array<std::pair<EditorMode, std::string>, 7> tools = {{
-        {EditorMode::Select, "S"},
-        {EditorMode::PlaceObstacle, "O"},
-        {EditorMode::DeleteObstacle, "E"},
-        {EditorMode::SetStartPose, "T"},
-        {EditorMode::SetGoalPose, "G"},
-        {EditorMode::DrawWorkZone, "Z"},
-        {EditorMode::PanView, "P"}
-    }};
-
-    float x = kToolbarButtonStartX;
-    for (std::size_t i = 0; i < tools.size(); ++i) {
-        const auto& [mode, label] = tools[i];
-        sf::RectangleShape buttonBg(sf::Vector2f(kToolbarButtonWidth, kToolbarButtonHeight));
-        buttonBg.setPosition(sf::Vector2f(x, kToolbarButtonY));
-        buttonBg.setFillColor(
-            mode == m_env.getEditorMode() ? sf::Color(70, 130, 180, 40) : sf::Color(255, 255, 255, 0)
-        );
-        buttonBg.setOutlineThickness(1.0f);
-        buttonBg.setOutlineColor(
-            mode == m_env.getEditorMode() ? sf::Color(70, 130, 180) : sf::Color(195, 195, 195)
-        );
-        m_window.draw(buttonBg);
-
-        sf::Text toolText(m_uiFont, label, 16);
-        toolText.setFillColor(mode == m_env.getEditorMode() ? sf::Color(25, 70, 120) : sf::Color(60, 60, 60));
-        toolText.setPosition(sf::Vector2f(x + 13.0f, 22.0f));
-        m_window.draw(toolText);
-        x += kToolbarButtonWidth + kToolbarButtonGap;
-    }
-}
-
-void Simulator::drawLocalizationLegend() {
-    if (!m_hasUiFont) {
-        return;
-    }
-    sf::RectangleShape background(sf::Vector2f(486.0f, 62.0f));
-    background.setPosition(sf::Vector2f(10.0f, kToolbarHeight + 10.0f));
-    background.setFillColor(sf::Color(250, 250, 250, 220));
-    background.setOutlineColor(sf::Color(90, 90, 90, 150));
-    background.setOutlineThickness(1.0f);
-    m_window.draw(background);
-
-    struct LegendItem {
-        const char* label;
-        sf::Color color;
-        bool enabled;
-    };
-    const std::array<LegendItem, 8> items{{
-        {"[R] Robot", sf::Color(50, 110, 190), true},
-        {"^ Start", sf::Color(20, 150, 60), true},
-        {"v Goal", sf::Color(200, 45, 45), true},
-        {"-- Path", kPathColor, true},
-        {".. Particles", kParticleColor, m_localizationView.particles},
-        {"(+) AMCL", kEstimateColor, m_localizationView.estimate},
-        {"/\\ Odom", kOdometryColor, m_localizationView.odometry},
-        {"* LiDAR", sf::Color(0, 145, 165),
-            m_localizationView.lidarRays || m_localizationView.lidarHitPoints}
-    }};
-    for (std::size_t index = 0; index < items.size(); ++index) {
-        sf::Color color = items[index].color;
-        if (!items[index].enabled) {
-            color = sf::Color(120, 120, 120, 150);
-        }
-        sf::Text label(m_uiFont, items[index].label, 14);
-        label.setFillColor(color);
-        label.setPosition(sf::Vector2f(
-            20.0f + 118.0f * static_cast<float>(index % 4),
-            kToolbarHeight + 17.0f + 26.0f * static_cast<float>(index / 4)
-        ));
-        m_window.draw(label);
-    }
-}
-
-void Simulator::drawInspector() {
-    m_window.draw(m_inspectorBg);
-    m_window.draw(m_divider);
-
-    if (!m_hasUiFont) {
-        return;
-    }
-
-    const sf::Vector2u windowSize = m_window.getSize();
-    const float windowWidth = static_cast<float>(windowSize.x);
-    const float windowHeight = static_cast<float>(windowSize.y);
-    const float contentWidth = kInspectorWidth - (kInspectorPadding * 2.0f);
-
-    sf::View inspectorView(
-        sf::FloatRect(
-            sf::Vector2f(0.0f, 0.0f),
-            sf::Vector2f(kInspectorWidth, m_inspectorBg.getSize().y)
-        )
-    );
-    inspectorView.setViewport(sf::FloatRect(
-        {m_inspectorBg.getPosition().x / windowWidth, m_inspectorBg.getPosition().y / windowHeight},
-        {m_inspectorBg.getSize().x / windowWidth, m_inspectorBg.getSize().y / windowHeight}
-    ));
-
-    m_window.setView(inspectorView);
-
-    float y = kInspectorPadding - m_inspectorScrollOffset;
-
-    auto drawSection = [&](const std::string& heading, const std::string& body, const sf::Color& color) {
-        sf::Text headingText(m_uiFont, heading, 19);
-        headingText.setFillColor(sf::Color(45, 45, 45));
-        headingText.setPosition(sf::Vector2f(kInspectorPadding, y));
-        m_window.draw(headingText);
-        y += 28.0f;
-
-        const std::vector<std::string> wrappedLines = wrapTextLines(body, m_uiFont, 16, contentWidth);
-        for (const auto& line : wrappedLines) {
-            sf::Text bodyText(m_uiFont, line, 16);
-            bodyText.setFillColor(color);
-            bodyText.setPosition(sf::Vector2f(kInspectorPadding, y));
-            m_window.draw(bodyText);
-            y += 22.0f;
-        }
-
-        y += kInspectorSectionGap;
-    };
-
-    sf::Text title(m_uiFont, "Inspector", 24);
-    title.setFillColor(sf::Color(40, 40, 40));
-    title.setPosition(sf::Vector2f(kInspectorPadding, y));
-    m_window.draw(title);
-    y += 42.0f;
-
-    std::ostringstream cursorInfo;
-    if (m_hoverWorldPos.has_value()) {
-        const GridCoord hoveredGrid = m_env.getMapData().getMapper().worldToGrid(*m_hoverWorldPos);
-        cursorInfo << "World: (" << static_cast<int>(m_hoverWorldPos->x) << ", "
-                   << static_cast<int>(m_hoverWorldPos->y) << ")\n"
-                   << "Grid: (" << hoveredGrid.col << ", " << hoveredGrid.row << ")";
-    } else {
-        cursorInfo << "World: -\nGrid: -";
-    }
-    drawSection("Cursor", cursorInfo.str(), sf::Color(75, 75, 75));
-
-    const MapData& map = m_env.getMapData();
-
-    std::ostringstream mapInfo;
-    mapInfo << "Grid: " << static_cast<int>(map.getGridResolution()) << "\n"
-            << "Obstacles: " << map.getObstacles().size() << "\n"
-            << "Work Zones: " << map.getWorkZones().size() << "\n"
-            << "Start Pose: " << (map.getRobotStartPose().has_value() ? "set" : "unset") << "\n"
-            << "Goal Pose: " << (map.getRobotGoalPose().has_value() ? "set" : "unset");
-    drawSection("Map Stats", mapInfo.str(), sf::Color(75, 75, 75));
-
-    std::ostringstream validationInfo;
-    validationInfo << "Status: " << toValidationLabel(m_validationResult.status);
-    if (m_validationResult.messages.empty()) {
-        validationInfo << "\nMap is ready.";
-    } else {
-        for (const auto& message : m_validationResult.messages) {
-            validationInfo << "\n- " << message;
-        }
-    }
-    drawSection("Map Validation", validationInfo.str(), getValidationColor(m_validationResult.status));
-
-    const PathResult& pathResult = m_pathExecution.getResult();
-    std::ostringstream planningInfo;
-    planningInfo << "Success: " << (pathResult.success ? "yes" : "no") << "\n"
-                 << "Nodes: " << pathResult.nodesExpanded << "\n"
-                 << "Length: " << static_cast<int>(pathResult.pathLength) << "\n"
-                 << "Grid cells: " << pathResult.path.size() << "\n"
-                 << "Waypoints: " << m_pathExecution.getExecutionWaypoints().size() << "\n"
-                 << "Execution: " << toPathExecutionLabel(m_pathExecution.getState()) << "\n"
-                 << "Mode: " << (m_navigationMode == NavigationMode::LocalizationDriven
-                        ? "Localization-Driven" : "Simulation Truth") << "\n"
-                 << "Planning Start Source: " << m_planningStartSource << "\n"
-                 << "Message: " << pathResult.message;
-    drawSection("Path Planning", planningInfo.str(), sf::Color(75, 75, 75));
-
-    std::ostringstream selectedInfo;
-    switch (m_selectedObject.type) {
-    case SelectedObjectType::Obstacle:
-        if (m_selectedObject.obstacleCoord.has_value()) {
-            const sf::Vector2f worldTopLeft = map.getMapper().gridToWorldTopLeft(*m_selectedObject.obstacleCoord);
-            selectedInfo << "Type: Obstacle\n"
-                         << "Grid: (" << m_selectedObject.obstacleCoord->col << ", "
-                         << m_selectedObject.obstacleCoord->row << ")\n"
-                         << "World: (" << static_cast<int>(worldTopLeft.x) << ", "
-                         << static_cast<int>(worldTopLeft.y) << ")";
-        }
-        break;
-    case SelectedObjectType::WorkZone:
-        if (m_selectedObject.workZoneIndex.has_value()
-            && *m_selectedObject.workZoneIndex < map.getWorkZones().size()) {
-            const WorkZone& zone = map.getWorkZones()[*m_selectedObject.workZoneIndex];
-            selectedInfo << "Type: Work Zone\n"
-                         << "Position: (" << static_cast<int>(zone.bounds.position.x) << ", "
-                         << static_cast<int>(zone.bounds.position.y) << ")\n"
-                         << "Size: (" << static_cast<int>(zone.bounds.size.x) << ", "
-                         << static_cast<int>(zone.bounds.size.y) << ")";
-        }
-        break;
-    case SelectedObjectType::StartPose:
-        if (map.getRobotStartPose().has_value()) {
-            selectedInfo << "Type: Start Pose\n"
-                         << "Position: (" << static_cast<int>(map.getRobotStartPose()->position.x) << ", "
-                         << static_cast<int>(map.getRobotStartPose()->position.y) << ")\n"
-                         << "Heading: " << static_cast<int>(map.getRobotStartPose()->heading * 57.2958f) << " deg";
-        }
-        break;
-    case SelectedObjectType::GoalPose:
-        if (map.getRobotGoalPose().has_value()) {
-            selectedInfo << "Type: Goal Pose\n"
-                         << "Position: (" << static_cast<int>(map.getRobotGoalPose()->position.x) << ", "
-                         << static_cast<int>(map.getRobotGoalPose()->position.y) << ")\n"
-                         << "Heading: " << static_cast<int>(map.getRobotGoalPose()->heading * 57.2958f) << " deg";
-        }
-        break;
-    case SelectedObjectType::Robot:
-        selectedInfo << "Type: Robot\n"
-                     << "Position: (" << static_cast<int>(m_amr.getPosition().x) << ", "
-                     << static_cast<int>(m_amr.getPosition().y) << ")\n"
-                     << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg";
-        break;
-    case SelectedObjectType::None:
-    default:
-        selectedInfo << "Type: None";
-        break;
-    }
-    drawSection("Selected Object", selectedInfo.str(), sf::Color(75, 75, 75));
-
-    const sf::Vector2f robotPos = m_amr.getPosition();
-    std::ostringstream robotInfo;
-    robotInfo << "Position: (" << static_cast<int>(robotPos.x) << ", "
-              << static_cast<int>(robotPos.y) << ")\n"
-              << "Heading: " << static_cast<int>(m_amr.getHeading() * 57.2958f) << " deg\n"
-              << "Mode: "
-              << (m_pathExecution.getState() == PathExecutionState::NotFollowing
-                  ? "manual"
-                  : toPathExecutionLabel(m_pathExecution.getState()));
-    drawSection("Robot State", robotInfo.str(), sf::Color(75, 75, 75));
-
-    const LocalizationEstimate& localizationEstimate = m_localizer.getEstimate();
-    const LocalizationStatistics& localizationStatistics = m_localizer.getStatistics();
-    const Pose2D& odometryPose = m_odometrySimulator.getOdometryPose();
-    const Pose2D groundTruthPose = getAmrPose(m_amr);
-    std::ostringstream localizationInfo;
-    localizationInfo << std::fixed << std::setprecision(1)
-                      << "State: " << toLocalizationStateLabel(localizationStatistics.state) << "\n"
-                     << "Support: " << toLocalizationSupportLabel(localizationStatistics.support) << "\n"
-                     << "Initialization: "
-                     << toLocalizationInitializationLabel(localizationStatistics.initialization) << "\n"
-                     << "Particles: " << localizationStatistics.particleCount << "\n"
-                     << "ESS pre/post: " << localizationStatistics.preResampleEffectiveSampleSize
-                     << " / " << localizationStatistics.effectiveSampleSize << "\n"
-                     << "Clusters: " << localizationStatistics.significantClusterCount
-                     << " significant / " << localizationStatistics.clusterCount << " total\n"
-                     << "Dominant / second: " << localizationStatistics.dominantClusterWeight
-                     << " / " << localizationStatistics.secondClusterWeight << "\n"
-                     << "Entropy: " << localizationStatistics.particleEntropy << "\n"
-                     << "Recovery: " << localizationStatistics.recoveryProbability << "\n"
-                     << "Reason: " << localizationStatistics.explanation << "\n";
-    if (localizationEstimate.valid) {
-        const double positionError = std::hypot(
-            localizationEstimate.pose.position.x - groundTruthPose.position.x,
-            localizationEstimate.pose.position.y - groundTruthPose.position.y
-        );
-        const double headingError = std::abs(normalizeLocalizationAngle(
-            localizationEstimate.pose.heading - groundTruthPose.heading
-        ));
-        localizationInfo
-            << "Estimated X: " << localizationEstimate.pose.position.x << "\n"
-            << "Estimated Y: " << localizationEstimate.pose.position.y << "\n"
-            << "Estimated Heading: " << localizationEstimate.pose.heading * 57.2957795 << " deg\n"
-            << "Ground Truth X: " << groundTruthPose.position.x << "\n"
-            << "Ground Truth Y: " << groundTruthPose.position.y << "\n"
-            << "Ground Truth Heading: " << groundTruthPose.heading * 57.2957795 << " deg\n"
-            << "Position Error: " << positionError << "\n"
-            << "Heading Error: " << headingError * 57.2957795 << " deg\n"
-            << "Odom X: " << odometryPose.position.x << "\n"
-            << "Odom Y: " << odometryPose.position.y << "\n"
-            << "Odom Heading: " << odometryPose.heading * 57.2957795 << " deg\n"
-            << "Sigma X: " << std::sqrt(std::max(0.0, localizationEstimate.covariance.xx())) << "\n"
-            << "Sigma Y: " << std::sqrt(std::max(0.0, localizationEstimate.covariance.yy())) << "\n"
-            << "Sigma Heading: "
-            << std::sqrt(std::max(0.0, localizationEstimate.covariance.yawYaw())) * 57.2957795
-            << " deg\n";
-    } else {
-        localizationInfo
-            << "Estimated X: -\nEstimated Y: -\nEstimated Heading: -\n"
-            << "Ground Truth X: " << groundTruthPose.position.x << "\n"
-            << "Ground Truth Y: " << groundTruthPose.position.y << "\n"
-            << "Ground Truth Heading: " << groundTruthPose.heading * 57.2957795 << " deg\n"
-            << "Position Error: -\nHeading Error: -\n"
-            << "Odom X: " << odometryPose.position.x << "\n"
-            << "Odom Y: " << odometryPose.position.y << "\n"
-            << "Odom Heading: " << odometryPose.heading * 57.2957795 << " deg\n";
-    }
-    if (m_localizationView.diagnostics) {
-        const SensorUpdateResult& sensor = localizationStatistics.sensor;
-        localizationInfo << "Sensor total/selected: " << sensor.totalBeams << " / "
-                         << sensor.selectedBeams << "\n"
-                         << "Used/skipped/invalid/max: " << sensor.usedBeams << " / "
-                         << sensor.skippedBeams << " / " << sensor.invalidBeams << " / "
-                         << sensor.maxRangeBeams << "\n"
-                         << "Quality / contrast: " << sensor.observationQuality << " / "
-                         << sensor.likelihoodContrast << "\n"
-                         << "Beam-skip fallback: " << (sensor.beamSkipFallback ? "yes" : "no")
-                         << "\nSensor updates: " << localizationStatistics.sensorUpdateCount
-                         << "\nHistory: " << m_localizer.getHistory().size();
-    }
-    drawSection("Localization", localizationInfo.str(), sf::Color(75, 75, 75));
-
-    std::ostringstream layerInfo;
-    auto onOff = [](bool enabled) { return enabled ? "ON" : "OFF"; };
-    layerInfo << "F1 Particles: " << onOff(m_localizationView.particles) << "\n"
-              << "F2 LiDAR rays: " << onOff(m_localizationView.lidarRays) << "\n"
-              << "F3 LiDAR hits: " << onOff(m_localizationView.lidarHitPoints) << "\n"
-              << "F4 AMCL estimate: " << onOff(m_localizationView.estimate) << "\n"
-              << "F6 Covariance: " << onOff(m_localizationView.covariance) << "\n"
-              << "F7 Odometry: " << onOff(m_localizationView.odometry) << "\n"
-              << "F8 Diagnostics: " << onOff(m_localizationView.diagnostics);
-    drawSection("Localization Layers", layerInfo.str(), sf::Color(75, 75, 75));
-
-    std::ostringstream legendInfo;
-    legendInfo << "Blue body = Ground Truth Robot\n"
-               << "Green arrow = Start Pose\n"
-               << "Red arrow = Goal Pose\n"
-               << "Blue line = Planned Path\n"
-               << "Violet dots = Particle Cloud\n"
-               << "Magenta ring = AMCL Estimate\n"
-               << "Orange triangle = Odometry\n"
-               << "Cyan line/dot = LiDAR\n"
-               << "Magenta ellipse = Covariance";
-    drawSection("Visual Legend", legendInfo.str(), sf::Color(75, 75, 75));
-
-    std::ostringstream controlsInfo;
-    controlsInfo << "Enter Plan Path\n"
-                 << "V Validate Map\n"
-                 << "F5 Save\n"
-                 << "F9 Load\n"
-                 << "Ctrl+N Clear Map\n"
-                 << "Ctrl+0 Reset View\n"
-                 << "Ctrl+R Reset Robot\n"
-                 << "Ctrl+L Reset Localization\n"
-                 << "Ctrl+G Global Localization\n"
-                 << "Ctrl+M Toggle Navigation Mode\n"
-                 << "Ctrl+Shift+K Kidnap at cursor\n"
-                 << "Status: " << m_statusMessage
-                 << (m_kidnapTestActive ? "\nKidnap test active" : "");
-    drawSection("Controls", controlsInfo.str(), sf::Color(70, 70, 70));
-
-    m_inspectorContentHeight = std::max(m_inspectorBg.getSize().y, y + m_inspectorScrollOffset);
-    scrollInspector(0.0f);
-
-    m_window.setView(m_uiView);
 }

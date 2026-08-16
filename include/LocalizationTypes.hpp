@@ -141,7 +141,7 @@ struct LocalizationHistorySample {
 
 struct LidarConfig {
     std::size_t beamCount = 91;
-    double fieldOfView = 1.5 * kLocalizationPi;
+    double fieldOfView = 2.0 * kLocalizationPi;
     double minRange = 5.0;
     double maxRange = 800.0;
     double offsetX = 0.0;
