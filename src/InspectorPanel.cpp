@@ -43,6 +43,15 @@ std::string localizationStateLabel(LocalizationState state) {
     }
 }
 
+std::string slamStateLabel(SlamState state) {
+    switch (state) {
+    case SlamState::Tracking: return "Tracking";
+    case SlamState::Lost: return "Lost";
+    case SlamState::Uninitialized:
+    default: return "Uninitialized";
+    }
+}
+
 std::string localizationSupportLabel(LocalizationSupport support) {
     switch (support) {
     case LocalizationSupport::Good: return "Good";
@@ -375,10 +384,75 @@ std::vector<InspectorSection> buildLocalizationSections(const InspectorData& dat
     return sections;
 }
 
+std::vector<InspectorSection> buildSlamSections(const InspectorData& data) {
+    std::vector<InspectorSection> sections;
+    const SlamUpdateResult& update = data.slamUpdate;
+    std::ostringstream primary;
+    primary << "State: " << slamStateLabel(update.state)
+            << "\nReason: " << scanMatchReasonLabel(update.match.reason)
+            << "\nPose valid: " << (update.poseValid ? "yes" : "no")
+            << "\nMap integrated: " << (update.mapIntegrated ? "yes" : "no");
+    sections.push_back({"SLAM State", primary.str()});
+
+    std::ostringstream pose;
+    pose << std::fixed << std::setprecision(1);
+    if (update.poseValid) {
+        pose << "Frame: SLAM local (truth-aligned for display only)\nCorrected: ("
+             << update.pose.position.x << ", "
+             << update.pose.position.y << ", "
+             << update.pose.heading * 57.2957795 << " deg)\nPredicted: ("
+             << update.predictedPose.position.x << ", "
+             << update.predictedPose.position.y << ", "
+             << update.predictedPose.heading * 57.2957795 << " deg)";
+    } else {
+        pose << "Frame: SLAM local (truth-aligned for display only)\n"
+             << "Corrected: -\nPredicted: -";
+    }
+    sections.push_back({"Local Pose Estimate", pose.str()});
+
+    std::ostringstream match;
+    match << std::fixed << std::setprecision(3)
+          << "Accepted: " << (update.match.accepted ? "yes" : "no")
+          << "\nScore: " << update.match.score
+          << "\nCorrection: (" << update.match.correctionX << ", "
+          << update.match.correctionY << ", "
+          << update.match.correctionYaw * 57.2957795 << " deg)\nBeams selected / used: "
+          << update.match.selectedBeams << " / " << update.match.usedBeams
+          << "\nCandidates coarse / fine: " << update.match.coarseCandidates
+          << " / " << update.match.fineCandidates;
+    sections.push_back({"Scan Matching", match.str()});
+
+    std::ostringstream map;
+    map << "Unknown: " << data.slamMapStatistics.unknownCells
+        << "\nFree: " << data.slamMapStatistics.freeCells
+        << "\nOccupied: " << data.slamMapStatistics.occupiedCells
+        << "\nRevision: " << data.slamMapStatistics.revision;
+    sections.push_back({"Estimated Occupancy Map", map.str()});
+
+    std::ostringstream lifecycle;
+    lifecycle << "Accepted updates: " << update.acceptedUpdates
+              << "\nRejected updates: " << update.rejectedUpdates
+              << "\nConsecutive failures: " << update.consecutiveFailures;
+    sections.push_back({"Lifecycle", lifecycle.str()});
+
+    auto onOff = [](bool enabled) { return enabled ? "ON" : "OFF"; };
+    std::ostringstream layers;
+    layers << "Occupancy map: " << onOff(data.slamView.occupancyMap)
+           << "\nCorrected pose: " << onOff(data.slamView.pose)
+           << "\nPredicted pose: " << onOff(data.slamView.predictedPose);
+    sections.push_back({"SLAM Layers", layers.str()});
+    sections.push_back({
+        "SLAM Controls",
+        "Ctrl+Shift+L Reset SLAM only\nCtrl+R Robot reset resets both estimators"
+    });
+    return sections;
+}
+
 std::vector<InspectorSection> buildSections(InspectorTab tab, const InspectorData& data) {
     switch (tab) {
     case InspectorTab::Navigation: return buildNavigationSections(data);
     case InspectorTab::Localization: return buildLocalizationSections(data);
+    case InspectorTab::Slam: return buildSlamSections(data);
     case InspectorTab::Map:
     default: return buildMapSections(data);
     }
@@ -419,7 +493,7 @@ sf::FloatRect InspectorPanel::getFooterBounds() const {
 }
 
 sf::FloatRect InspectorPanel::getTabBounds(InspectorTab tab) const {
-    const float tabWidth = m_bounds.size.x / 3.0f;
+    const float tabWidth = m_bounds.size.x / 4.0f;
     return sf::FloatRect(
         sf::Vector2f(
             m_bounds.position.x + tabWidth * static_cast<float>(tabIndex(tab)),
@@ -437,7 +511,9 @@ bool InspectorPanel::handleClick(const sf::Vector2i& pixelPosition) {
     if (!contains(pixelPosition)) {
         return false;
     }
-    for (InspectorTab tab : {InspectorTab::Map, InspectorTab::Navigation, InspectorTab::Localization}) {
+    for (InspectorTab tab : {
+            InspectorTab::Map, InspectorTab::Navigation,
+            InspectorTab::Localization, InspectorTab::Slam}) {
         if (containsPixel(getTabBounds(tab), pixelPosition)) {
             m_activeTab = tab;
             clampScroll(m_activeTab);
@@ -489,10 +565,11 @@ void InspectorPanel::draw(
     title.setPosition(m_bounds.position + sf::Vector2f(kPadding, 12.0f));
     window.draw(title);
 
-    const std::array<std::pair<InspectorTab, const char*>, 3> tabs{{
+    const std::array<std::pair<InspectorTab, const char*>, 4> tabs{{
         {InspectorTab::Map, "Map"},
         {InspectorTab::Navigation, "Navigation"},
-        {InspectorTab::Localization, "Localization"}
+        {InspectorTab::Localization, "Localization"},
+        {InspectorTab::Slam, "SLAM"}
     }};
     for (const auto& [tab, label] : tabs) {
         const sf::FloatRect tabBounds = getTabBounds(tab);

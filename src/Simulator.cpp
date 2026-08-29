@@ -61,10 +61,13 @@ Simulator::Simulator()
       m_amclConfig(),
       m_lidarConfig(),
       m_odometryConfig(),
-      m_localizationRng(m_amclConfig.randomSeed),
+      m_odometryRng(m_amclConfig.randomSeed ^ 0x13579BDFu),
+      m_lidarRng(m_amclConfig.randomSeed ^ 0x2468ACE0u),
+      m_amclRng(m_amclConfig.randomSeed),
       m_lidarSimulator(m_lidarConfig),
       m_odometrySimulator(m_odometryConfig),
       m_localizer(m_amclConfig),
+      m_slamFrontend(),
       m_isPanning(false),
       m_lastPanPixel({0, 0}),
       m_simViewportRect(sf::Vector2f(0.0f, kToolbarHeight), sf::Vector2f(1080.0f, 836.0f)),
@@ -90,6 +93,7 @@ Simulator::Simulator()
     m_pathExecution.install(std::move(initialPathResult));
     m_likelihoodField.rebuild(m_env.getMapData(), m_amclConfig.likelihoodMaxDistance);
     m_odometrySimulator.reset(getAmrPose(m_amr));
+    resetSlamForCurrentPose();
     updateValidationResult();
 }
 
@@ -103,7 +107,9 @@ void Simulator::loadLocalizationConfig(const std::string& filename) {
     m_amclConfig = config.amcl;
     m_lidarConfig = config.lidar;
     m_odometryConfig = config.odometry;
-    m_localizationRng.seed(m_amclConfig.randomSeed);
+    m_odometryRng.seed(m_amclConfig.randomSeed ^ 0x13579BDFu);
+    m_lidarRng.seed(m_amclConfig.randomSeed ^ 0x2468ACE0u);
+    m_amclRng.seed(m_amclConfig.randomSeed);
     m_lidarSimulator = LidarSimulator(m_lidarConfig);
     m_odometrySimulator = OdometrySimulator(m_odometryConfig);
     m_localizer = AmclLocalizer(m_amclConfig);
@@ -230,7 +236,9 @@ bool Simulator::synchronizeRobotToStartPose() {
 }
 
 void Simulator::resetLocalizationForCurrentPose(bool initializeFromStart) {
-    m_localizationRng.seed(m_amclConfig.randomSeed);
+    m_odometryRng.seed(m_amclConfig.randomSeed ^ 0x13579BDFu);
+    m_lidarRng.seed(m_amclConfig.randomSeed ^ 0x2468ACE0u);
+    m_amclRng.seed(m_amclConfig.randomSeed);
     const Pose2D currentPose = getAmrPose(m_amr);
     resetLocalizationState(
         m_env.getMapData(),
@@ -238,7 +246,7 @@ void Simulator::resetLocalizationForCurrentPose(bool initializeFromStart) {
         initializeFromStart,
         m_odometrySimulator,
         m_localizer,
-        m_localizationRng
+        m_amclRng
     );
     m_likelihoodField.rebuildIfNeeded(
         m_env.getMapData(),
@@ -247,17 +255,18 @@ void Simulator::resetLocalizationForCurrentPose(bool initializeFromStart) {
     m_currentScan = LaserScan{};
     m_scanGroundTruthPose = currentPose;
     m_kidnapTestActive = false;
+    resetSlamForCurrentPose();
 
     rebuildLocalizationVisualization();
 }
 
 void Simulator::resetLocalizationOnly() {
     clearPathExecution();
-    m_localizationRng.seed(m_amclConfig.randomSeed);
+    m_amclRng.seed(m_amclConfig.randomSeed);
     const std::optional<Pose2D>& start = m_env.getMapData().getRobotStartPose();
     const Pose2D mean = start.has_value() ? *start : getAmrPose(m_amr);
     const bool initialized = m_localizer.initializeLocal(
-        mean, m_env.getMapData(), m_localizationRng
+        mean, m_env.getMapData(), m_amclRng
     );
     m_currentScan = LaserScan{};
     m_kidnapTestActive = false;
@@ -269,11 +278,24 @@ void Simulator::resetLocalizationOnly() {
     }
 }
 
+void Simulator::resetSlamForCurrentPose() {
+    m_slamFrontend.reset();
+    m_slamUpdate = m_slamFrontend.getLastUpdate();
+    m_slamDisplayOrigin = getAmrPose(m_amr);
+    m_slamVisualization.clear();
+    rebuildSlamVisualization();
+}
+
+void Simulator::resetSlamOnly() {
+    resetSlamForCurrentPose();
+    m_statusMessage = "Reset SLAM only";
+}
+
 void Simulator::globalLocalization() {
     clearPathExecution();
-    m_localizationRng.seed(m_amclConfig.randomSeed);
+    m_amclRng.seed(m_amclConfig.randomSeed);
     const bool initialized = m_localizer.initializeGlobal(
-        m_env.getMapData(), m_localizationRng
+        m_env.getMapData(), m_amclRng
     );
     m_currentScan = LaserScan{};
     m_kidnapTestActive = false;
@@ -433,15 +455,42 @@ bool Simulator::applyLocalizationDrivenCommand(
 OdometryDelta Simulator::observeAcceptedMotion(
     const Pose2D& acceptedPose,
     OdometrySimulator& odometrySimulator,
-    AmclLocalizer& localizer,
     std::mt19937& randomEngine
 ) {
-    const OdometryDelta odometry = odometrySimulator.observe(
-        acceptedPose,
-        randomEngine
-    );
-    localizer.accumulateOdometry(odometry);
-    return odometry;
+    return odometrySimulator.observe(acceptedPose, randomEngine);
+}
+
+SimulatorSensorFrame Simulator::acquireSensorFrame(
+    const Pose2D& acceptedPose,
+    const MapData& mapData,
+    OdometrySimulator& odometrySimulator,
+    const LidarSimulator& lidarSimulator,
+    std::mt19937& odometryRandomEngine,
+    std::mt19937& lidarRandomEngine
+) {
+    SimulatorSensorFrame frame;
+    frame.odometry = odometrySimulator.observe(acceptedPose, odometryRandomEngine);
+    frame.scan = lidarSimulator.simulate(acceptedPose, mapData, lidarRandomEngine);
+    return frame;
+}
+
+SensorDispatchResult Simulator::dispatchSensorFrame(
+    const SimulatorSensorFrame& frame,
+    const MapLikelihoodField& field,
+    const MapData& mapData,
+    AmclLocalizer& localizer,
+    SlamFrontend& slamFrontend,
+    std::mt19937& amclRandomEngine
+) {
+    SensorDispatchResult result;
+    localizer.accumulateOdometry(frame.odometry);
+    result.slam = slamFrontend.process(frame.odometry, frame.scan);
+    if (localizer.needsSensorUpdate()) {
+        result.amclUpdated = localizer.updateWithScan(
+            frame.scan, field, mapData, amclRandomEngine
+        );
+    }
+    return result;
 }
 
 bool Simulator::resetLocalizationState(
@@ -482,27 +531,32 @@ void Simulator::updateLocalization() {
     }
 
     const Pose2D groundTruthPose = getAmrPose(m_amr);
-    observeAcceptedMotion(
-        groundTruthPose,
-        m_odometrySimulator,
-        m_localizer,
-        m_localizationRng
-    );
-    if (!m_localizer.needsSensorUpdate()) {
-        return;
-    }
-
-    m_currentScan = m_lidarSimulator.simulate(
+    const SimulatorSensorFrame frame = acquireSensorFrame(
         groundTruthPose,
         mapData,
-        m_localizationRng
+        m_odometrySimulator,
+        m_lidarSimulator,
+        m_odometryRng,
+        m_lidarRng
     );
+    const SensorDispatchResult dispatch = dispatchSensorFrame(
+        frame,
+        m_likelihoodField,
+        mapData,
+        m_localizer,
+        m_slamFrontend,
+        m_amclRng
+    );
+    m_currentScan = frame.scan;
     m_scanGroundTruthPose = groundTruthPose;
-    if (m_localizer.updateWithScan(
-            m_currentScan,
-            m_likelihoodField,
-            mapData,
-            m_localizationRng)) {
+    m_slamUpdate = dispatch.slam;
+    if (dispatch.slam.match.reason == ScanMatchReason::Bootstrap) {
+        m_slamDisplayOrigin = groundTruthPose;
+        m_slamVisualization.clear();
+    }
+    rebuildSlamVisualization();
+
+    if (dispatch.amclUpdated) {
         m_localizer.appendHistory(m_odometrySimulator.getOdometryPose());
         rebuildLocalizationVisualization();
     }
@@ -510,6 +564,12 @@ void Simulator::updateLocalization() {
 
 void Simulator::rebuildLocalizationVisualization() {
     m_localizationVisualization.rebuildParticles(m_localizer.getParticles());
+}
+
+void Simulator::rebuildSlamVisualization() {
+    m_slamVisualization.rebuildMapIfNeeded(
+        m_slamFrontend.getMap(), m_slamDisplayOrigin
+    );
 }
 
 void Simulator::runPathPlanning() {
@@ -601,7 +661,12 @@ void Simulator::handleEditorHotkeys(const sf::Event& event) {
                 globalLocalization();
                 return;
             case sf::Keyboard::Key::L:
-                resetLocalizationOnly();
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)
+                    || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift)) {
+                    resetSlamOnly();
+                } else {
+                    resetLocalizationOnly();
+                }
                 return;
             case sf::Keyboard::Key::K:
                 if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)
@@ -1022,6 +1087,7 @@ void Simulator::render() {
 
     m_window.setView(m_simView);
     m_env.draw(m_window, m_simView, m_selectedObject);
+    m_slamVisualization.draw(m_window, m_slamUpdate, m_slamDisplayOrigin);
     m_localizationVisualization.drawScan(m_window, m_currentScan, m_scanGroundTruthPose);
     m_localizationVisualization.drawBelief(
         m_window,
@@ -1063,7 +1129,10 @@ void Simulator::render() {
         m_planningStartSource,
         m_statusMessage,
         m_navigationStatusMessage,
-        m_kidnapTestActive
+        m_kidnapTestActive,
+        m_slamUpdate,
+        m_slamFrontend.getMap().getStatistics(),
+        m_slamVisualization.getOptions()
     };
     m_inspector.draw(m_window, m_uiFont, m_hasUiFont, inspectorData);
 

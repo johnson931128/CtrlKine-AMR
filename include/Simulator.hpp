@@ -19,12 +19,24 @@
 #include "OdometrySimulator.hpp"
 #include "PathExecution.hpp"
 #include "SelectedObject.hpp"
+#include "SlamFrontend.hpp"
+#include "SlamVisualization.hpp"
 
 struct SimulatorRuntimeTestAccess;
 
 enum class NavigationMode {
     SimulationTruth,
     LocalizationDriven
+};
+
+struct SimulatorSensorFrame {
+    OdometryDelta odometry;
+    LaserScan scan;
+};
+
+struct SensorDispatchResult {
+    bool amclUpdated = false;
+    SlamUpdateResult slam;
 };
 
 class Simulator {
@@ -65,10 +77,13 @@ void resetRobotPose();
 bool synchronizeRobotToStartPose();
 void resetLocalizationForCurrentPose(bool initializeFromStart);
 void resetLocalizationOnly();
+void resetSlamOnly();
+void resetSlamForCurrentPose();
 void globalLocalization();
 void runKidnapTest();
 void updateLocalization();
 void rebuildLocalizationVisualization();
+void rebuildSlamVisualization();
 
 /* Validation and path planning */
 void updateValidationResult(bool updateStatusMessage = false);
@@ -122,8 +137,23 @@ static bool applyLocalizationDrivenCommand(
 static OdometryDelta observeAcceptedMotion(
     const Pose2D& acceptedPose,
     OdometrySimulator& odometrySimulator,
-    AmclLocalizer& localizer,
     std::mt19937& randomEngine
+);
+static SimulatorSensorFrame acquireSensorFrame(
+    const Pose2D& acceptedPose,
+    const MapData& mapData,
+    OdometrySimulator& odometrySimulator,
+    const LidarSimulator& lidarSimulator,
+    std::mt19937& odometryRandomEngine,
+    std::mt19937& lidarRandomEngine
+);
+static SensorDispatchResult dispatchSensorFrame(
+    const SimulatorSensorFrame& frame,
+    const MapLikelihoodField& field,
+    const MapData& mapData,
+    AmclLocalizer& localizer,
+    SlamFrontend& slamFrontend,
+    std::mt19937& amclRandomEngine
 );
 static bool resetLocalizationState(
     const MapData& mapData,
@@ -158,14 +188,20 @@ Environment m_env;
 AmclConfig m_amclConfig;
 LidarConfig m_lidarConfig;
 OdometryConfig m_odometryConfig;
-std::mt19937 m_localizationRng;
+std::mt19937 m_odometryRng;
+std::mt19937 m_lidarRng;
+std::mt19937 m_amclRng;
 LidarSimulator m_lidarSimulator;
 OdometrySimulator m_odometrySimulator;
 MapLikelihoodField m_likelihoodField;
 AmclLocalizer m_localizer;
+SlamFrontend m_slamFrontend;
 LaserScan m_currentScan;
 Pose2D m_scanGroundTruthPose;
 LocalizationVisualization m_localizationVisualization;
+SlamUpdateResult m_slamUpdate;
+Pose2D m_slamDisplayOrigin;
+SlamVisualization m_slamVisualization;
 bool m_kidnapTestActive = false;
 NavigationMode m_navigationMode = NavigationMode::SimulationTruth;
 std::string m_planningStartSource = "Map Start";

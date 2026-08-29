@@ -10,11 +10,13 @@
 #include "MapValidator.hpp"
 #include "PathExecution.hpp"
 #include "SelectedObject.hpp"
+#include "SlamVisualization.hpp"
 
 enum class InspectorTab {
     Map,
     Navigation,
-    Localization
+    Localization,
+    Slam
 };
 
 struct InspectorData {
@@ -36,6 +38,9 @@ struct InspectorData {
     std::string statusMessage;
     std::string navigationStatusMessage;
     bool kidnapTestActive = false;
+    const SlamUpdateResult& slamUpdate;
+    SlamMapStatistics slamMapStatistics;
+    const SlamViewOptions& slamView;
 };
 
 class InspectorPanel {
@@ -66,6 +71,6 @@ private:
 
     sf::FloatRect m_bounds;
     InspectorTab m_activeTab = InspectorTab::Map;
-    std::array<float, 3> m_scrollOffsets{};
-    std::array<float, 3> m_contentHeights{};
+    std::array<float, 4> m_scrollOffsets{};
+    std::array<float, 4> m_contentHeights{};
 };

@@ -71,11 +71,37 @@ struct SimulatorRuntimeTestAccess {
     static OdometryDelta observeAcceptedMotion(
         const Pose2D& acceptedPose,
         OdometrySimulator& odometrySimulator,
-        AmclLocalizer& localizer,
         std::mt19937& randomEngine
     ) {
         return Simulator::observeAcceptedMotion(
-            acceptedPose, odometrySimulator, localizer, randomEngine
+            acceptedPose, odometrySimulator, randomEngine
+        );
+    }
+
+    static SimulatorSensorFrame acquireSensorFrame(
+        const Pose2D& acceptedPose,
+        const MapData& mapData,
+        OdometrySimulator& odometrySimulator,
+        const LidarSimulator& lidarSimulator,
+        std::mt19937& odometryRandomEngine,
+        std::mt19937& lidarRandomEngine
+    ) {
+        return Simulator::acquireSensorFrame(
+            acceptedPose, mapData, odometrySimulator, lidarSimulator,
+            odometryRandomEngine, lidarRandomEngine
+        );
+    }
+
+    static SensorDispatchResult dispatchSensorFrame(
+        const SimulatorSensorFrame& frame,
+        const MapLikelihoodField& field,
+        const MapData& mapData,
+        AmclLocalizer& localizer,
+        SlamFrontend& slamFrontend,
+        std::mt19937& amclRandomEngine
+    ) {
+        return Simulator::dispatchSensorFrame(
+            frame, field, mapData, localizer, slamFrontend, amclRandomEngine
         );
     }
 
@@ -318,14 +344,13 @@ int main() {
         OdometrySimulator odometry(odometryConfig);
         const Pose2D previousAccepted{sf::Vector2f(100.0f, 100.0f), 0.0f};
         odometry.reset(previousAccepted);
-        AmclLocalizer localizer(localizationTestConfig());
         std::mt19937 randomEngine(100);
         const OdometryDelta rejected = SimulatorRuntimeTestAccess::observeAcceptedMotion(
-            previousAccepted, odometry, localizer, randomEngine
+            previousAccepted, odometry, randomEngine
         );
         const Pose2D nextAccepted{sf::Vector2f(150.0f, 100.0f), 0.0f};
         const OdometryDelta accepted = SimulatorRuntimeTestAccess::observeAcceptedMotion(
-            nextAccepted, odometry, localizer, randomEngine
+            nextAccepted, odometry, randomEngine
         );
         return near(static_cast<float>(rejected.translation), 0.0f)
             && near(static_cast<float>(rejected.rotation1), 0.0f)
@@ -368,6 +393,127 @@ int main() {
             && localizer.getStatistics().state == LocalizationState::Uninitialized
             && samePoint(odometry.getOdometryPose().position, acceptedPose.position)
             && near(odometry.getOdometryPose().heading, acceptedPose.heading);
+    });
+
+    runTest(suite, "SLAM-SIM-001", "headless sensor frame fans one exact scan to AMCL and SLAM", [] {
+        MapData map(50.0f);
+        map.addObstacle(GridCoord{4, 2});
+        map.addObstacle(GridCoord{1, 5});
+        const Pose2D pose{sf::Vector2f(100.0f, 100.0f), 0.0f};
+        OdometryConfig odometryConfig;
+        odometryConfig.translationStdDevPerDistance = 0.0;
+        odometryConfig.translationStdDevPerRotation = 0.0;
+        odometryConfig.rotationStdDevPerRotation = 0.0;
+        odometryConfig.rotationStdDevPerDistance = 0.0;
+        OdometrySimulator odometry(odometryConfig);
+        odometry.reset(pose);
+        LidarConfig lidarConfig;
+        lidarConfig.beamCount = 31;
+        lidarConfig.fieldOfView = 2.0 * kLocalizationPi;
+        lidarConfig.rangeNoiseStdDev = 0.0;
+        LidarSimulator lidar(lidarConfig);
+        std::mt19937 odometryRng(31);
+        std::mt19937 lidarRng(32);
+        const SimulatorSensorFrame frame = SimulatorRuntimeTestAccess::acquireSensorFrame(
+            pose, map, odometry, lidar, odometryRng, lidarRng
+        );
+        const LaserScan scanBefore = frame.scan;
+
+        AmclConfig amclConfig = localizationTestConfig();
+        AmclLocalizer localizer(amclConfig);
+        std::mt19937 initializationRng(33);
+        if (!localizer.initializeLocal(pose, map, initializationRng)) return false;
+        MapLikelihoodField field;
+        field.rebuild(map, amclConfig.likelihoodMaxDistance);
+        SlamFrontend slam;
+        std::mt19937 amclRng(34);
+        const SensorDispatchResult result = SimulatorRuntimeTestAccess::dispatchSensorFrame(
+            frame, field, map, localizer, slam, amclRng
+        );
+        return result.amclUpdated && result.slam.state == SlamState::Tracking
+            && result.slam.integration.totalBeams == frame.scan.ranges.size()
+            && localizer.getStatistics().sensor.totalBeams == frame.scan.ranges.size()
+            && frame.scan.ranges == scanBefore.ranges
+            && frame.scan.angleIncrement == scanBefore.angleIncrement;
+    });
+
+    runTest(suite, "SLAM-SIM-001", "actual acquisition seam isolates odometry from extra LiDAR cadence", [] {
+        MapData map(50.0f);
+        map.addObstacle(GridCoord{4, 2});
+        LidarConfig lidarConfig;
+        lidarConfig.beamCount = 31;
+        lidarConfig.fieldOfView = 2.0 * kLocalizationPi;
+        LidarSimulator lidar(lidarConfig);
+        OdometrySimulator firstOdometry;
+        OdometrySimulator secondOdometry;
+        const Pose2D start{sf::Vector2f(100.0f, 100.0f), 0.0f};
+        firstOdometry.reset(start);
+        secondOdometry.reset(start);
+        std::mt19937 firstOdometryRng(41);
+        std::mt19937 secondOdometryRng(41);
+        std::mt19937 firstLidarRng(42);
+        std::mt19937 secondLidarRng(42);
+        for (int step = 0; step < 5; ++step) {
+            const Pose2D pose{sf::Vector2f(100.0f + step * 15.0f, 100.0f), 0.0f};
+            const SimulatorSensorFrame first = SimulatorRuntimeTestAccess::acquireSensorFrame(
+                pose, map, firstOdometry, lidar, firstOdometryRng, firstLidarRng
+            );
+            (void)lidar.simulate(pose, map, secondLidarRng);
+            const SimulatorSensorFrame second = SimulatorRuntimeTestAccess::acquireSensorFrame(
+                pose, map, secondOdometry, lidar, secondOdometryRng, secondLidarRng
+            );
+            if (first.odometry.rotation1 != second.odometry.rotation1
+                || first.odometry.translation != second.odometry.translation
+                || first.odometry.rotation2 != second.odometry.rotation2) {
+                return false;
+            }
+        }
+        return true;
+    });
+
+    runTest(suite, "SLAM-ARCH-004", "SLAM reset history cannot perturb AMCL inference for identical frames", [] {
+        MapData map(50.0f);
+        map.addObstacle(GridCoord{4, 2});
+        map.addObstacle(GridCoord{1, 5});
+        const Pose2D pose{sf::Vector2f(100.0f, 100.0f), 0.0f};
+        LidarConfig lidarConfig;
+        lidarConfig.beamCount = 31;
+        lidarConfig.fieldOfView = 2.0 * kLocalizationPi;
+        lidarConfig.rangeNoiseStdDev = 0.0;
+        LidarSimulator lidar(lidarConfig);
+        OdometrySimulator odometry;
+        odometry.reset(pose);
+        std::mt19937 odometryRng(51);
+        std::mt19937 lidarRng(52);
+        const SimulatorSensorFrame frame = SimulatorRuntimeTestAccess::acquireSensorFrame(
+            pose, map, odometry, lidar, odometryRng, lidarRng
+        );
+        AmclConfig config = localizationTestConfig();
+        AmclLocalizer first(config);
+        AmclLocalizer second(config);
+        std::mt19937 firstInitialization(53);
+        std::mt19937 secondInitialization(53);
+        if (!first.initializeLocal(pose, map, firstInitialization)
+            || !second.initializeLocal(pose, map, secondInitialization)) return false;
+        MapLikelihoodField field;
+        field.rebuild(map, config.likelihoodMaxDistance);
+        SlamFrontend firstSlam;
+        SlamFrontend resetSlam;
+        resetSlam.reset();
+        std::mt19937 firstAmclRng(54);
+        std::mt19937 secondAmclRng(54);
+        SimulatorRuntimeTestAccess::dispatchSensorFrame(
+            frame, field, map, first, firstSlam, firstAmclRng
+        );
+        SimulatorRuntimeTestAccess::dispatchSensorFrame(
+            frame, field, map, second, resetSlam, secondAmclRng
+        );
+        const LocalizationEstimate& a = first.getEstimate();
+        const LocalizationEstimate& b = second.getEstimate();
+        return a.valid == b.valid && a.pose.position == b.pose.position
+            && a.pose.heading == b.pose.heading
+            && first.getStatistics().sensor.observationQuality
+                == second.getStatistics().sensor.observationQuality;
     });
 
     runTest(suite, "LOCALIZATION-NAV-001", "confidence gate uses belief diagnostics without truth error", [] {
@@ -587,6 +733,27 @@ int main() {
         return compact && desktopFooter.size.y > 0.0f
             && desktopFooter.position.y
                 >= desktopBody.position.y + desktopBody.size.y;
+    });
+
+    runTest(suite, "UI-INSPECTOR-004", "Inspector exposes a fourth independently scrollable SLAM tab", [] {
+        InspectorPanel panel;
+        panel.setBounds(sf::FloatRect(
+            sf::Vector2f(1080.0f, 64.0f), sf::Vector2f(360.0f, 500.0f)
+        ));
+        panel.setContentHeight(InspectorTab::Slam, 900.0f);
+        const sf::FloatRect slam = panel.getTabBounds(InspectorTab::Slam);
+        const sf::FloatRect localization = panel.getTabBounds(InspectorTab::Localization);
+        const sf::Vector2i click(
+            static_cast<int>(slam.position.x + slam.size.x * 0.5f),
+            static_cast<int>(slam.position.y + slam.size.y * 0.5f)
+        );
+        panel.handleClick(click);
+        panel.scroll(1.0f);
+        return panel.getActiveTab() == InspectorTab::Slam
+            && near(slam.size.x, 90.0f)
+            && near(localization.position.x + localization.size.x, slam.position.x)
+            && near(panel.getScrollOffset(InspectorTab::Slam), 48.0f)
+            && near(panel.getScrollOffset(InspectorTab::Localization), 0.0f);
     });
 
     return suite.exitCode();

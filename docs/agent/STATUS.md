@@ -2,132 +2,116 @@
 
 ## Current milestone
 
-The pre-SLAM architecture, desktop UI, and full-circle LiDAR milestone is
-implemented. Existing map editing, navigation, localization, recovery, and the
-optional localization-driven navigation mode remain available; SLAM itself was
-not added.
+The first 2D LiDAR SLAM milestone is implemented through occupancy mapping,
+correlative scan matching, frontend lifecycle, Simulator fan-out, visualization,
+Inspector integration, deterministic metrics, stress tests, and benchmarks.
+
+This commit is an explicitly requested development checkpoint, not the completed
+milestone. Post-review fixes are present in source but have not received the
+required final rebuild and clean regression.
 
 ## Completed behavior
 
-- `Simulator` remains the application lifecycle and subsystem coordinator, but
-  no longer formats the Inspector, owns tab/scroll state, duplicates toolbar
-  geometry, or contains localization/LiDAR overlay drawing math.
-- `ApplicationLayout` owns deterministic toolbar, simulation viewport, and
-  Inspector geometry. The default window is 1440x900 with a 360-pixel Inspector;
-  resize calculations remain nonnegative and preserve the simulation view
-  center/zoom. Very short windows hide the fixed legend footer instead of
-  allowing it to cover the tabs.
-- `EditorToolbar` owns the seven editor-button rectangles, labels, active
-  styling, drawing, and hit testing. Drawn and clickable geometry now share one
-  source.
-- `InspectorPanel` owns Map, Navigation, and Localization tab selection,
-  independent per-tab scroll offsets, fixed tab/header presentation, grouped
-  section formatting, and the compact legend footer. Inspector clicks and wheel
-  input are isolated from map editing and viewport zoom.
-- Map shows cursor, statistics, validation, selection, Start/Goal, controls, and
-  application status. Navigation shows truth robot state, navigation mode,
-  planning source/result, waypoint progress, and a dedicated stop/status reason.
-  Localization groups primary state, estimate, confidence, particle filter,
-  sensor accounting, recovery, display-only truth/odometry diagnostics, layers,
-  and controls.
-- `LocalizationVisualization` observationally owns the particle cache, LiDAR
-  rays/hit points, AMCL marker/heading, covariance ellipse, odometry marker, and
-  localization layer options. It does not mutate inference state or consume
-  inference RNG. Max-range/no-return rays may be shown by F2 but are excluded
-  from F3 hit points.
-- Editor selection has one authoritative owner in `Simulator`; `Environment`
-  receives it read-only for rendering. Start/Goal selection now adds a gold halo
-  without replacing their semantic green/red marker colors.
-- Default LiDAR is 91 beams over a full 360 degrees. A full scan uses
-  `angle(i) = -pi + i * (2*pi/N)` for `i = 0..N-1`, so it contains N unique
-  directions and never duplicates the -pi/+pi seam. Partial scans retain their
-  prior inclusive-endpoint behavior, and the one-beam forward-scan convention
-  remains unchanged.
-- `LaserScan` remains the sensor abstraction carrying ranges, angle minimum and
-  increment, range bounds, and x/y/yaw extrinsics. Shared geometry helpers
-  identify full-circle scans, compute beam angles, classify physical hits, and
-  select cyclically uniform beam indices.
-- Raw LiDAR beam count, AMCL selected beams, and rendered beams remain separate.
-  AMCL and visualization use cyclic full-circle selection without seam bias;
-  AMCL remains bounded by `maxBeams`, rendering remains bounded by
-  `renderedRayCount`, and simulation/prediction/drawing preserve identical
-  sensor extrinsics.
-- Truth isolation remains intact: truth is used only to synthesize odometry and
-  LiDAR measurements and for display/test diagnostics. AMCL consumes
-  `OdometryDelta`, `LaserScan`, and map-derived data. A future SLAM subsystem
-  can consume the same measurement boundary without accessing AMR truth,
-  Inspector state, or visualization internals.
+- `SlamOccupancyGrid` owns a fixed local log-odds grid with separate observed
+  state and unknown/free/occupied classification. It is independent of
+  `MapData`.
+- `OccupancyGridMapper` applies full LiDAR x/y/yaw extrinsics, deterministic
+  clipped ray traversal, free-space updates, occupied endpoints, max-range
+  free-only behavior, per-scan occupied-over-free resolution, and one revision
+  per committed scan.
+- `CorrelativeScanMatcher` performs deterministic bounded coarse/fine x/y/yaw
+  search against the SLAM map, reports correction/support/candidate diagnostics,
+  and does not mutate the map. Reviewer fixes now select physical hits before
+  bounded subsampling, require positive occupied-map support, and normalize tie
+  corrections by configured search steps.
+- `SlamFrontend` consumes only `OdometryDelta` and `LaserScan`, bootstraps at
+  local identity, predicts from rot1/signed translation/rot2 odometry, integrates
+  only bootstrap or accepted corrections, freezes its map on rejection, and
+  implements `Uninitialized`, `Tracking`, and `Lost` with bounded reacquisition.
+- `Simulator` has separate deterministic odometry, LiDAR, and AMCL RNG streams.
+  A consumer-neutral sensor-frame seam generates one delta and one scan, then
+  fans the same immutable frame to independent AMCL and SLAM consumers.
+- SLAM reset is independent of AMCL reset. Robot/map lifecycle resets both where
+  the simulated robot frame changes.
+- `SlamVisualization` caches cell-sized free/occupied geometry plus corrected and
+  predicted pose markers. Its world overlay uses a bootstrap-time truth origin
+  only for display; the Inspector labels values as SLAM-local and the overlay as
+  truth-aligned for display only.
+- `InspectorPanel` has a fourth independently scrollable `SLAM` tab showing
+  state, reason, local poses, match score/correction, beams, candidates, map
+  statistics, lifecycle counters, and layer state.
+- `docs/specs/SlamV1Spec.md`, the updated system overview, and the orchestrated
+  phase package under `docs/agent/tasks/` define ownership and completion gates.
 
-## Verification
+## Verification performed
 
-- Clean build: `mingw32-make clean` followed by `mingw32-make all` passed.
-- Clean normal regression: 177 PASS, 0 FAIL across ten executables:
-  CoordinateMapper 6, MapData 16, MapDataFile 15, PathPlanner 16,
-  PathExecution 19, SimulatorRuntime/UI 20, LocalizationSensor/Visualization 34,
-  ParticleFilter 35, LocalizationIntegration 10, LocalizationConfig 6.
-- All ten normal test executables were then run directly; every executable
-  returned exit code 0 with the same per-suite PASS/FAIL totals.
-- New deterministic coverage includes default/tab switching, independent
-  Inspector scroll, small-height footer behavior, layout sizes, shared toolbar
-  hit geometry, four/eight-beam full-circle geometry, seam uniqueness,
-  heading/yaw rotation, x/y/yaw extrinsics, cyclic AMCL/render sampling,
-  full-circle beam skipping, and max-range hit-point exclusion.
-- Extended deterministic stress: 4 PASS, 0 FAIL. Local localization succeeded
-  10/10 seeds (mean final position error 11.0719); global localization remained
-  9/10 within the documented bound with zero false-convergence updates; open maps
-  produced 0/10 false convergence; kidnapped recovery succeeded 5/5 seeds.
-  Local and kidnapped gates now require those exact recorded baselines.
-- Final representative benchmark (milliseconds): field rebuild 0.0108,
-  91-beam full-circle LiDAR 0.1300. At 300/1000/2000 particles with 31 beams,
-  sensor weighting was 3.4252/11.0652/22.6411, clustering
-  0.5217/1.8420/3.6205, and KLD resampling 0.1144/0.3859/0.8454. At 5000
-  particles and 31 beams: sensor 55.707, clustering 8.3821, KLD 2.2404.
-  At 2000 particles and 91 beams: sensor 62.6348.
-- Final architecture review found no critical or important issues. Sensor and UI
-  reviewers' concrete findings were fixed and their targeted re-reviews found
-  no remaining issue.
-- Desktop startup acceptance: the built process launched, remained alive after
-  two seconds, and exposed the titled window
-  `AMR Physics Simulator & Environment Editor` with a nonzero window handle.
-  Windows-control screenshot/input automation could not connect to its native
-  pipe (OS error 2), so resize, tabs, scrolling, overlays, hotkeys, and navigation
-  are not claimed as visually or interactively verified.
+- Synchronized baseline at `d5824d7`: clean build and normal regression passed
+  177 PASS / 0 FAIL.
+- Before post-review fixes: occupancy mapping 10/10, matcher 9/9, frontend 9/9,
+  integration 6/6, and normal regression 205 PASS / 0 FAIL.
+- Before post-review fixes: SLAM stress passed 4/4. Ideal position RMSE was
+  approximately zero, heading RMSE 0 degrees, occupied IoU 0.8056, known-cell
+  agreement 1.0, and coverage 0.3583.
+- Before post-review fixes: nominal noise completed 5/5 seeds with mean/worst
+  position RMSE 8.5264/13.8094, heading RMSE 2.4436/3.4530 degrees, occupied IoU
+  0.2893/0.1667, agreement 0.9839, and coverage 0.3618.
+- Before post-review fixes: elevated noise completed 5/5 seeds with mean/worst
+  position RMSE 9.5709/15.1394, heading RMSE 2.7963/5.6818 degrees, occupied IoU
+  0.3310/0.1493, agreement 0.9833, and coverage 0.3618.
+- Before post-review fixes: the unoptimized 91-beam 360-degree benchmark reported
+  median/p95 milliseconds of 0.7592/0.7727 for occupancy integration,
+  2.2344/2.3888 for matching, and 3.0670/3.1847 for a frontend update, with
+  729 coarse plus 125 fine candidates.
+- Static ground-truth isolation scan found no `AMR`, `MapData`, simulator,
+  Inspector, sensor-simulator, or truth dependency in production SLAM inference
+  files.
+- Architecture, algorithm, and coverage reviewers found no critical issue. The
+  source includes fixes for consumer-neutral fan-out, coordinate-rule wording,
+  display labeling/bootstrap alignment, cell-sized visualization, large opposing
+  rotations, physical-hit sampling, normalized tie breaking, positive map
+  support, headless runtime seams, missing-sample accounting, and a rotated
+  corridor stress scenario.
+- Current-source validation is incomplete. The most recent reviewer rebuild of
+  the expanded matcher suite reported 14 PASS / 1 FAIL because a manual test
+  fixture placed an exact pi/2 endpoint in column 30 while float beam metadata
+  floors the endpoint into column 29. No final build, normal regression, stress,
+  or benchmark was run after the latest fixes.
 
 ## Known limitations
 
-- Human desktop acceptance is still required for appearance, resize feel, tab
-  interaction, Inspector scrolling, map zoom isolation, toolbar/legend
-  readability, localization overlays, full-circle LiDAR appearance, reset and
-  kidnap controls, and both navigation modes.
-- Localization support remains an interpretable first-version heuristic, not a
-  formal observability proof. One global stress seed remains safely Tracking
-  outside the coarse acquisition bound rather than falsely converging.
-- The exact continuous likelihood-field query remains linear in obstacle AABBs;
-  sensor weighting is still the dominant high-particle/high-beam cost.
-- The Inspector uses a purpose-built SFML text panel rather than a general GUI
-  framework. Its footer intentionally disappears at impractically short window
-  heights so the tabs remain accessible.
-- `LaserScan` models an instantaneous planar scan. Timing metadata and
-  rolling-scan motion distortion were intentionally not invented.
+- The checkpoint contains a known matcher test-fixture failure described above;
+  it is not yet a green milestone commit.
+- Newly added Simulator fan-out tests, corrected-pose cell-placement test,
+  expanded occupancy tests, missing-sample penalties, and rotated corridor stress
+  case have not been rebuilt in the current source state.
+- The fixed SLAM grid does not expand. There is no loop closure, pose graph,
+  graph optimization, ICP, map persistence, or navigation on the SLAM estimate.
+- Strict occupied-cell IoU is sensitive to pose/surface-cell shifts under noise;
+  known-cell agreement remains much higher and coverage is reported separately.
+- Desktop SLAM tab interaction and visual appearance have not received human
+  acceptance. Static/headless UI ownership and geometry are covered only by
+  tests completed before the latest reviewer fixes.
+- The existing localization benchmark uses 91 beams over 270 degrees; only the
+  SLAM benchmark is labeled 91-beam 360-degree.
 
-## Next smallest meaningful milestone
+## Next smallest implementation step
 
-Perform the human desktop acceptance checklist for the new layout, all three
-Inspector tabs, scrolling/zoom isolation, toolbar/legend, localization layers,
-360-degree LiDAR, resets/kidnap, and both navigation modes. After that evidence
-is recorded, define the first SLAM specification against the existing
-`OdometryDelta` + `LaserScan` boundary before implementing any mapping or
-scan-matching algorithm.
+Correct the manual matcher fixture so its non-boundary endpoint oracle is
+independent of float cardinal rounding. Then rebuild the expanded mapping,
+matcher, frontend, Simulator runtime, and integration suites; run the rotated
+corridor stress case; run the complete clean normal regression, localization and
+SLAM stress targets, and both benchmarks; fix any remaining important finding;
+then replace this checkpoint status with final measured evidence.
 
 ## Important decisions
 
-- This milestone adds no SLAM, scan matching, map building, path smoothing,
-  controller redesign, or alternate planner.
-- `MapData`, `AMR`, `PathExecution`, and `AmclLocalizer` remain the
-  authoritative owners of persistent map, truth pose, route progress, and
-  localization lifecycle respectively.
-- Full-circle scans use a cyclic denominator of N; partial scans continue using
-  their established inclusive endpoints. No speculative scan timing fields were
-  added.
-- Ground-truth error remains display/test-only and never influences confidence,
-  recovery, resampling, planning gates, or control.
+- SLAM inference starts at local identity and never receives absolute odometry,
+  `MapData`, AMR pose, or ground truth.
+- `MapData` remains simulator truth. Test-only metrics and display-only frame
+  alignment may read truth but never feed inference.
+- AMCL and SLAM consume shared sensor values but own independent lifecycle,
+  state, maps, and inference behavior.
+- Unknown cells are not treated as free in mapping accuracy, and incomplete pose
+  samples may not improve aggregate RMSE.
+- This checkpoint is intentionally published with explicit incomplete
+  verification because the user requested an immediate commit/push.

@@ -14,6 +14,7 @@ The system provides:
 * Map validation
 * Map persistence
 * Grid-based path-planning integration
+* Sensor-only local 2D LiDAR SLAM
 
 ## 2. Main Modules
 
@@ -45,6 +46,22 @@ Checks whether the current map contains invalid or suspicious states.
 
 Reads MapData and produces a PathResult. The first implementation uses grid-based A*.
 
+### SlamFrontend
+
+Consumes only OdometryDelta and LaserScan, estimates a pose in a SLAM-local
+frame, and owns the lifecycle that orders prediction, scan matching, and map
+integration.
+
+### SlamOccupancyGrid
+
+Stores the SLAM-owned log-odds occupancy estimate. It is independent of MapData,
+which remains simulator ground truth.
+
+### CorrelativeScanMatcher
+
+Searches a bounded x/y/yaw neighborhood around an odometry prediction and scores
+LaserScan alignment against the SLAM-owned occupancy estimate.
+
 ## 3. Main Runtime Flow
 
 Input
@@ -61,10 +78,25 @@ Enter key
 → PathResult is returned
 → Inspector displays the result
 
+SLAM flow:
+
+OdometryDelta and LaserScan
+→ SlamFrontend motion prediction
+→ CorrelativeScanMatcher correction
+→ SlamOccupancyGrid integration
+→ observational visualization and Inspector diagnostics
+
 ## 4. Architectural Rules
 
 * Simulator coordinates modules but must not contain the A* algorithm.
 * MapData is the authoritative source of editable map state.
-* Coordinate conversion must be performed through CoordinateMapper.
+* Persistent/editor map coordinate conversion must be performed through
+  CoordinateMapper. The SLAM-owned local grid performs its own origin-relative
+  conversion because it is independent of MapData.
 * Inspector displays results but must not implement validation or planning rules.
 * PathPlanner must not depend on rendering or editor input.
+* SLAM inference must not access AMR ground truth, MapData, sensor simulators,
+  rendering, or Inspector state.
+* MapData is simulator ground truth; SlamOccupancyGrid is the independent SLAM
+  estimate.
+* AMCL and SLAM are independent consumers of shared sensor abstractions.
