@@ -1,102 +1,12 @@
 # AGENTS.md
-
-## Goal
-
-Make small, correct, and reviewable changes.
-
-Do not optimize for maximum implementation speed.
-Prefer code that is easy to understand and maintain.
-
-## Workflow
-
-For every task:
-
-1. Read the relevant specification under `docs/specs/`.
-2. Inspect the related header, implementation, and tests.
-3. Identify the smallest change needed.
-4. Implement only that change.
-5. Build or test when applicable.
-6. If verification fails, inspect the cause and make the smallest fix.
-7. When the requested task is complete, STOP and report.
-
-## Scope
-
-Only perform the explicitly requested task.
-
-Do not:
-
-- Implement the next milestone automatically.
-- Modify unrelated files.
-- Perform large refactors unless requested.
-- Add new abstractions or dependencies unless necessary.
-- Rewrite working code only for style.
-
-If a task is too large, split it into smaller steps and implement only the current step.
-
-## Source of Truth
-
-Priority:
-
-1. Approved specifications in `docs/specs/`
-2. Explicit task requirements
-3. Tests
-4. Existing implementation
-
-Do not invent important behavior when the specification is unclear.
-
-## Architecture
-
-Follow `docs/specs/SystemOverview.md`.
-
-In particular:
-
-- `Simulator` coordinates modules but does not contain path-planning algorithms.
-- `MapData` owns persistent map state.
-- Coordinate conversion goes through `CoordinateMapper`.
-- `PathPlanner` must not depend on rendering or editor input.
-
-## Code Style
-
-Prefer straightforward C++.
-
-Avoid unnecessary cleverness or abstraction.
-
-When introducing a non-obvious C++ feature, STL container, or algorithm,
-briefly explain why it is used.
-
-## Report
-
-After each task, report:
-
-- Modified files
-- What changed
-- Verification result
-- Remaining work
-
-## Repository Handoff
-
-`docs/agent/STATUS.md` is the shared project-state snapshot for ChatGPT,
-Codex, and future development sessions.
-
-Before starting a coding task:
-
-1. Read `docs/agent/STATUS.md`.
-2. Confirm that its current milestone matches the requested task.
-3. Read the relevant specification and implementation.
-
-After completing a task:
-
-1. Update `docs/agent/STATUS.md` to reflect the actual repository state.
-2. Record:
-   - Current milestone
-   - Completed behavior
-   - Verification performed
-   - Known limitations
-   - Next smallest implementation step
-   - Important decisions when relevant
-3. Do not record planned behavior as completed.
-4. Commit the implementation and status update together.
-5. Push the completed commit to the repository.
-
-`STATUS.md` is a current-state snapshot, not a chronological development log.
-Keep it concise and replace stale information.
+- 開始任務前先讀 `docs/agent/STATUS.md`、相關 `docs/specs/`，再檢查對應 source 與 tests。
+- 只處理明確要求的範圍；不要自動進入下一 milestone、做無關重構或加入不必要的 dependency。
+- 優先採用簡單、可維護且符合既有 architecture boundary 的實作，不為了 style 重寫正常運作的程式。
+- UI / runtime 任務在環境允許時必須實際 build、啟動程式並操作相關流程，而不只檢查程式碼。
+- UI 驗證應在重要操作狀態查看或保存 screenshot，主動檢查 clipping、overlap、排版、狀態回饋與互動問題。
+- 若無法直接操作桌面程式，改用 deterministic interaction / rendering tests，並明確說明未完成真實 desktop acceptance。
+- Repository 內若有適用的 Skill，應優先閱讀並依其 workflow 執行。
+- 修改後先跑 targeted tests，再執行與改動相關的 regression / stress verification；失敗時找出原因再修正。
+- Source of truth 優先序：`docs/specs/` > 明確任務需求 > tests > 現有 implementation。
+- 完成後更新 `docs/agent/STATUS.md` 為實際狀態，不得把未驗證或規劃中的功能寫成已完成。
+- 任務完成後 commit 並 push implementation + STATUS，一併回報修改內容、驗證結果與仍存在的限制。
