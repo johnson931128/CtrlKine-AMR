@@ -1,4 +1,4 @@
-#include "PathPlanner.hpp"
+#include "navigation/PathPlanner.hpp"
 
 #include <cmath>
 #include <limits>

@@ -1,4 +1,4 @@
-#include "LocalizationConfig.hpp"
+#include "localization/LocalizationConfig.hpp"
 
 #include <cstdio>
 #include <fstream>

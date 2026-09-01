@@ -17,32 +17,32 @@ The Main Agent verifies findings and performs production changes.
 Prioritize:
 
 ```
-include/Simulator.hpp
-src/Simulator.cpp
+include/app/Simulator.hpp
+src/app/Simulator.cpp
 
-include/Environment.hpp
-src/Environment.cpp
+include/editor/Environment.hpp
+src/editor/Environment.cpp
 
-include/AMR.hpp
-src/AMR.cpp
+include/core/AMR.hpp
+src/core/AMR.cpp
 
-include/MapData.hpp
-src/MapData.cpp
+include/map/MapData.hpp
+src/map/MapData.cpp
 
-include/PathPlanner.hpp
-src/PathPlanner.cpp
+include/navigation/PathPlanner.hpp
+src/navigation/PathPlanner.cpp
 
-include/PathExecution.hpp
-src/PathExecution.cpp
+include/navigation/PathExecution.hpp
+src/navigation/PathExecution.cpp
 
-include/AmclLocalizer.hpp
-src/AmclLocalizer.cpp
+include/localization/AmclLocalizer.hpp
+src/localization/AmclLocalizer.cpp
 
-include/ParticleFilter.hpp
-src/ParticleFilter.cpp
+include/localization/ParticleFilter.hpp
+src/localization/ParticleFilter.cpp
 
-include/LocalizationVisualization.hpp
-src/LocalizationVisualization.cpp
+include/localization/LocalizationVisualization.hpp
+src/localization/LocalizationVisualization.cpp
 ```
 
 Inspect additional files only when dependency tracing requires it.

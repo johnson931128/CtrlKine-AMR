@@ -9,8 +9,18 @@ LDLIBS = -lsfml-graphics -lsfml-window -lsfml-system
 SRC_DIR = src
 BUILD_DIR = build
 
-SRCS = $(wildcard $(SRC_DIR)/*.cpp)
-OBJS = $(SRCS:$(SRC_DIR)/%.cpp=$(BUILD_DIR)/%.o)
+SRC_DIRS = $(SRC_DIR) \
+	$(SRC_DIR)/core \
+	$(SRC_DIR)/editor \
+	$(SRC_DIR)/map \
+	$(SRC_DIR)/sensors \
+	$(SRC_DIR)/navigation \
+	$(SRC_DIR)/localization \
+	$(SRC_DIR)/slam \
+	$(SRC_DIR)/ui \
+	$(SRC_DIR)/app
+SRCS = $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
 TARGET = $(BUILD_DIR)/CtrlKine-AMR.exe
 
@@ -71,7 +81,7 @@ $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS) $(LDLIBS)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(TEST_BUILD_DIR)/CoordinateMapperTests.o: tests/CoordinateMapperTests.cpp
@@ -146,7 +156,7 @@ $(TEST_BUILD_DIR)/SlamBenchmark.o: tests/SlamBenchmark.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -Itests -c $< -o $@
 
-$(TEST_BUILD_DIR)/MapData.o: src/MapData.cpp
+$(TEST_BUILD_DIR)/MapData.o: src/map/MapData.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -165,54 +175,54 @@ $(TEST_PATH_TARGET): $(TEST_BUILD_DIR)/PathPlannerTests.o $(TEST_BUILD_DIR)/Path
 $(TEST_EXECUTION_TARGET): $(TEST_BUILD_DIR)/PathExecutionTests.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/Simulator.o $(BUILD_DIR)/ApplicationLayout.o $(BUILD_DIR)/EditorToolbar.o $(BUILD_DIR)/InspectorPanel.o $(BUILD_DIR)/Environment.o $(BUILD_DIR)/MapValidator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(BUILD_DIR)/SlamFrontend.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o $(BUILD_DIR)/SlamVisualization.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
+$(TEST_RUNTIME_TARGET): $(TEST_BUILD_DIR)/SimulatorRuntimeTests.o $(BUILD_DIR)/app/Simulator.o $(BUILD_DIR)/ui/ApplicationLayout.o $(BUILD_DIR)/ui/EditorToolbar.o $(BUILD_DIR)/ui/InspectorPanel.o $(BUILD_DIR)/editor/Environment.o $(BUILD_DIR)/map/MapValidator.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/LocalizationConfig.o $(BUILD_DIR)/localization/LocalizationVisualization.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(BUILD_DIR)/localization/ParticleFilter.o $(BUILD_DIR)/slam/SlamFrontend.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o $(BUILD_DIR)/slam/SlamVisualization.o $(TEST_BUILD_DIR)/PathExecution.o $(TEST_BUILD_DIR)/PathPlanner.o $(TEST_BUILD_DIR)/MapData.o $(TEST_BUILD_DIR)/AMR.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_LOCALIZATION_SENSOR_TARGET): $(TEST_BUILD_DIR)/LocalizationSensorTests.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_LOCALIZATION_SENSOR_TARGET): $(TEST_BUILD_DIR)/LocalizationSensorTests.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/LocalizationVisualization.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_PARTICLE_FILTER_TARGET): $(TEST_BUILD_DIR)/ParticleFilterTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/LocalizationVisualization.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_PARTICLE_FILTER_TARGET): $(TEST_BUILD_DIR)/ParticleFilterTests.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/LocalizationVisualization.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/localization/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_LOCALIZATION_INTEGRATION_TARGET): $(TEST_BUILD_DIR)/LocalizationIntegrationTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_LOCALIZATION_INTEGRATION_TARGET): $(TEST_BUILD_DIR)/LocalizationIntegrationTests.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(BUILD_DIR)/localization/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_LOCALIZATION_CONFIG_TARGET): $(TEST_BUILD_DIR)/LocalizationConfigTests.o $(BUILD_DIR)/LocalizationConfig.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_LOCALIZATION_CONFIG_TARGET): $(TEST_BUILD_DIR)/LocalizationConfigTests.o $(BUILD_DIR)/localization/LocalizationConfig.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(BUILD_DIR)/localization/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_SLAM_OCCUPANCY_TARGET): $(TEST_BUILD_DIR)/SlamOccupancyGridTests.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o
+$(TEST_SLAM_OCCUPANCY_TARGET): $(TEST_BUILD_DIR)/SlamOccupancyGridTests.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_SCAN_MATCHER_TARGET): $(TEST_BUILD_DIR)/CorrelativeScanMatcherTests.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o
+$(TEST_SCAN_MATCHER_TARGET): $(TEST_BUILD_DIR)/CorrelativeScanMatcherTests.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_SLAM_FRONTEND_TARGET): $(TEST_BUILD_DIR)/SlamFrontendTests.o $(BUILD_DIR)/SlamFrontend.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o $(BUILD_DIR)/LidarSimulator.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_SLAM_FRONTEND_TARGET): $(TEST_BUILD_DIR)/SlamFrontendTests.o $(BUILD_DIR)/slam/SlamFrontend.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o $(BUILD_DIR)/sensors/LidarSimulator.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_SLAM_INTEGRATION_TARGET): $(TEST_BUILD_DIR)/SlamIntegrationTests.o $(BUILD_DIR)/SlamFrontend.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o $(BUILD_DIR)/SlamVisualization.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/OdometrySimulator.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/ParticleFilter.o $(BUILD_DIR)/MapLikelihoodField.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_SLAM_INTEGRATION_TARGET): $(TEST_BUILD_DIR)/SlamIntegrationTests.o $(BUILD_DIR)/slam/SlamFrontend.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o $(BUILD_DIR)/slam/SlamVisualization.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/localization/ParticleFilter.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_LOCALIZATION_STRESS_TARGET): $(TEST_BUILD_DIR)/LocalizationStressTests.o $(BUILD_DIR)/AmclLocalizer.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_LOCALIZATION_STRESS_TARGET): $(TEST_BUILD_DIR)/LocalizationStressTests.o $(BUILD_DIR)/localization/AmclLocalizer.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/localization/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_SLAM_STRESS_TARGET): $(TEST_BUILD_DIR)/SlamStressTests.o $(BUILD_DIR)/SlamFrontend.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
+$(TEST_SLAM_STRESS_TARGET): $(TEST_BUILD_DIR)/SlamStressTests.o $(BUILD_DIR)/slam/SlamFrontend.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(LOCALIZATION_BENCHMARK_TARGET): $(TEST_BUILD_DIR)/LocalizationBenchmark.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/MapLikelihoodField.o $(BUILD_DIR)/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
+$(LOCALIZATION_BENCHMARK_TARGET): $(TEST_BUILD_DIR)/LocalizationBenchmark.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/localization/MapLikelihoodField.o $(BUILD_DIR)/localization/ParticleFilter.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(SLAM_BENCHMARK_TARGET): $(TEST_BUILD_DIR)/SlamBenchmark.o $(BUILD_DIR)/SlamFrontend.o $(BUILD_DIR)/CorrelativeScanMatcher.o $(BUILD_DIR)/SlamOccupancyGrid.o $(BUILD_DIR)/OccupancyGridMapper.o $(BUILD_DIR)/LidarSimulator.o $(BUILD_DIR)/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
+$(SLAM_BENCHMARK_TARGET): $(TEST_BUILD_DIR)/SlamBenchmark.o $(BUILD_DIR)/slam/SlamFrontend.o $(BUILD_DIR)/slam/CorrelativeScanMatcher.o $(BUILD_DIR)/slam/SlamOccupancyGrid.o $(BUILD_DIR)/slam/OccupancyGridMapper.o $(BUILD_DIR)/sensors/LidarSimulator.o $(BUILD_DIR)/sensors/OdometrySimulator.o $(TEST_BUILD_DIR)/MapData.o
 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(TEST_BUILD_DIR)/PathPlanner.o: src/PathPlanner.cpp
+$(TEST_BUILD_DIR)/PathPlanner.o: src/navigation/PathPlanner.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_BUILD_DIR)/PathExecution.o: src/PathExecution.cpp
+$(TEST_BUILD_DIR)/PathExecution.o: src/navigation/PathExecution.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TEST_BUILD_DIR)/AMR.o: src/AMR.cpp
+$(TEST_BUILD_DIR)/AMR.o: src/core/AMR.cpp
 	@mkdir -p $(TEST_BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 

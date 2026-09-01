@@ -29,14 +29,14 @@ It does not own localization inference or navigation algorithms.
 Inspect primarily:
 
 ```
-include/Simulator.hpp
-src/Simulator.cpp
+include/app/Simulator.hpp
+src/app/Simulator.cpp
 
-include/Environment.hpp
-src/Environment.cpp
+include/editor/Environment.hpp
+src/editor/Environment.cpp
 
-include/LocalizationVisualization.hpp
-src/LocalizationVisualization.cpp
+include/localization/LocalizationVisualization.hpp
+src/localization/LocalizationVisualization.cpp
 ```
 
 Inspect related UI/test helpers only when necessary.

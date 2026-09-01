@@ -1,8 +1,8 @@
-#include "LidarSimulator.hpp"
-#include "LaserScanGeometry.hpp"
-#include "MapLikelihoodField.hpp"
-#include "OdometrySimulator.hpp"
-#include "LocalizationVisualization.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "sensors/LaserScanGeometry.hpp"
+#include "localization/MapLikelihoodField.hpp"
+#include "sensors/OdometrySimulator.hpp"
+#include "localization/LocalizationVisualization.hpp"
 
 #include <algorithm>
 #include <cmath>

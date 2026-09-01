@@ -1,4 +1,4 @@
-#include "OccupancyGridMapper.hpp"
+#include "slam/OccupancyGridMapper.hpp"
 
 #include <cmath>
 #include <limits>

@@ -1,9 +1,9 @@
-#include "CorrelativeScanMatcher.hpp"
+#include "slam/CorrelativeScanMatcher.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-#include "OccupancyGridMapper.hpp"
+#include "slam/OccupancyGridMapper.hpp"
 #include "TestSupport.hpp"
 
 namespace {
@@ -93,14 +93,14 @@ int main() {
     runTest(suite, "SLAM-MATCH-003", "manual occupancy fixture validates endpoint geometry independently", [] {
         SlamOccupancyGrid grid(gridConfig());
         grid.applyEvidence({
-            {{35, 30}, true},
-            {{30, 36}, true},
-            {{22, 30}, true}
+            {{34, 31}, true},
+            {{31, 35}, true},
+            {{25, 35}, true}
         });
         LaserScan scan;
         scan.ranges = {50.0f, 60.0f, 70.0f};
-        scan.angleMin = 0.0f;
-        scan.angleIncrement = static_cast<float>(kLocalizationPi * 0.5);
+        scan.angleMin = 0.25f;
+        scan.angleIncrement = 1.0f;
         scan.minRange = 1.0f;
         scan.maxRange = 100.0f;
         CorrelativeScanMatcherConfig config = matcherConfig();

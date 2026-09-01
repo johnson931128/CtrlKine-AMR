@@ -1,6 +1,6 @@
-#include "LidarSimulator.hpp"
-#include "MapLikelihoodField.hpp"
-#include "ParticleFilter.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "localization/MapLikelihoodField.hpp"
+#include "localization/ParticleFilter.hpp"
 
 #include <chrono>
 #include <iostream>

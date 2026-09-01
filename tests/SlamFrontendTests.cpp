@@ -1,12 +1,12 @@
-#include "SlamFrontend.hpp"
+#include "slam/SlamFrontend.hpp"
 
 #include <cmath>
 #include <limits>
 #include <random>
 #include <stdexcept>
 
-#include "LidarSimulator.hpp"
-#include "MapData.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "map/MapData.hpp"
 #include "TestSupport.hpp"
 
 namespace {
@@ -147,7 +147,9 @@ int main() {
     });
 
     runTest(suite, "SLAM-FRONT-002", "tracking predicts, corrects, and integrates only the accepted pose", [&] {
-        SlamFrontend frontend(frontendConfig());
+        SlamFrontendConfig config = frontendConfig();
+        config.maximumOdometryRotation = 1.0;
+        SlamFrontend frontend(config);
         frontend.process(OdometryDelta{}, firstScan);
         OdometryDelta noisy = exactDelta(start, moved);
         noisy.translation += 10.0;

@@ -1,7 +1,7 @@
-#include "AmclLocalizer.hpp"
-#include "LidarSimulator.hpp"
-#include "MapLikelihoodField.hpp"
-#include "OdometrySimulator.hpp"
+#include "localization/AmclLocalizer.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "localization/MapLikelihoodField.hpp"
+#include "sensors/OdometrySimulator.hpp"
 
 #include <algorithm>
 #include <cmath>

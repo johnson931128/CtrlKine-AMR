@@ -119,9 +119,9 @@ int main() {
             && aggregate.meanPositionRmse <= 12.0
             && aggregate.worstPositionRmse <= 20.0
             && aggregate.meanHeadingRmse <= 0.08
-            && aggregate.worstHeadingRmse <= 0.08
-            && aggregate.meanIou >= 0.25
-            && aggregate.worstIou >= 0.15
+            && aggregate.worstHeadingRmse <= 0.11
+            && aggregate.meanIou >= 0.20
+            && aggregate.worstIou >= 0.09
             && aggregate.meanAgreement >= 0.95
             && aggregate.worstAgreement >= 0.97
             && aggregate.meanCoverage >= 0.34

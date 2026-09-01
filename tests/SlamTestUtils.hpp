@@ -7,9 +7,9 @@
 #include <set>
 #include <vector>
 
-#include "LidarSimulator.hpp"
-#include "OdometrySimulator.hpp"
-#include "SlamFrontend.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "sensors/OdometrySimulator.hpp"
+#include "slam/SlamFrontend.hpp"
 
 struct SlamScenarioMetrics {
     bool completed = false;

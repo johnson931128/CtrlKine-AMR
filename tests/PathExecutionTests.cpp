@@ -1,5 +1,5 @@
-#include "AMR.hpp"
-#include "PathExecution.hpp"
+#include "core/AMR.hpp"
+#include "navigation/PathExecution.hpp"
 
 #include <cmath>
 #include <limits>

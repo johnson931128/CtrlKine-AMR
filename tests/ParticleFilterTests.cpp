@@ -1,8 +1,8 @@
-#include "AmclLocalizer.hpp"
-#include "LidarSimulator.hpp"
-#include "MapLikelihoodField.hpp"
-#include "ParticleFilter.hpp"
-#include "LocalizationVisualization.hpp"
+#include "localization/AmclLocalizer.hpp"
+#include "sensors/LidarSimulator.hpp"
+#include "localization/MapLikelihoodField.hpp"
+#include "localization/ParticleFilter.hpp"
+#include "localization/LocalizationVisualization.hpp"
 
 #include <algorithm>
 #include <cmath>

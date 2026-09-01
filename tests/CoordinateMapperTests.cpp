@@ -1,4 +1,4 @@
-#include "CoordinateTypes.hpp"
+#include "core/CoordinateTypes.hpp"
 
 #include <cmath>
 

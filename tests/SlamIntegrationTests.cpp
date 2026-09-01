@@ -4,8 +4,8 @@
 #include <iostream>
 #include <random>
 
-#include "AmclLocalizer.hpp"
-#include "SlamVisualization.hpp"
+#include "localization/AmclLocalizer.hpp"
+#include "slam/SlamVisualization.hpp"
 #include "TestSupport.hpp"
 
 namespace {

@@ -13,22 +13,22 @@ Do not implement SLAM.
 Read primarily:
 
 ```
-include/LidarSimulator.hpp
-src/LidarSimulator.cpp
+include/sensors/LidarSimulator.hpp
+src/sensors/LidarSimulator.cpp
 
-include/LocalizationTypes.hpp
+include/localization/LocalizationTypes.hpp
 
-include/AmclLocalizer.hpp
-src/AmclLocalizer.cpp
+include/localization/AmclLocalizer.hpp
+src/localization/AmclLocalizer.cpp
 
-include/ParticleFilter.hpp
-src/ParticleFilter.cpp
+include/localization/ParticleFilter.hpp
+src/localization/ParticleFilter.cpp
 
-include/LocalizationVisualization.hpp
-src/LocalizationVisualization.cpp
+include/localization/LocalizationVisualization.hpp
+src/localization/LocalizationVisualization.cpp
 
-include/LocalizationConfig.hpp
-src/LocalizationConfig.cpp
+include/localization/LocalizationConfig.hpp
+src/localization/LocalizationConfig.cpp
 ```
 
 Relevant tests:
