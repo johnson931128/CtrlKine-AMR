@@ -1,757 +1,603 @@
-# Next UI/UX Milestone Plan
-
-This document is analysis and implementation planning only. It does not approve
-or start an implementation phase.
-
-## 1. Current Architecture Findings
-
-### Repository and verification baseline
-
-- The repository was fetched before this analysis. Local `main` and
-  `origin/main` are synchronized at `8fb248f` (`0` ahead, `0` behind).
-- The worktree was clean before this file was added.
-- `docs/agent/STATUS.md` records a clean application build, 226/226 normal
-  regression, 4/4 localization stress, and 5/5 SLAM stress after the source
-  layout refactor. Those results were inspected, not rerun in this analysis-only
-  turn.
-- `docs/specs/README.md` still marks `EditorUISpec.md` as not started. The next
-  milestone therefore needs an approved UI contract before production changes.
-- The build path is `mingw32-make all`; the application launches as
-  `build/CtrlKine-AMR.exe`. MinGW, SFML 3.0.0, and required SFML DLLs are
-  available in the current environment.
-
-### Runtime ownership
-
-- `Simulator` owns the application loop, event routing, simulation timing,
-  simulation and UI views, editor coordination, AMR truth, sensor acquisition,
-  AMCL and SLAM orchestration, path execution, UI state, and top-level render
-  order.
-- `Environment` owns `MapData`, editor mode/tool state, map editing, map
-  persistence delegation, selection hit testing, and simulation-map rendering.
-- `MapData` is the authoritative editable/simulation map. `AMR` is the
-  authoritative ground-truth robot pose.
-- `AmclLocalizer` and `SlamFrontend` own independent inference state. The same
-  immutable `SimulatorSensorFrame` is fanned out to both, while odometry, LiDAR,
-  and AMCL use separate random streams.
-- `LocalizationVisualization` and `SlamVisualization` are already observational
-  leaf renderers. Their mutable state is limited to presentation options and
-  cached SFML geometry.
-- `InspectorPanel` owns the active tab and four independent scroll offsets. It
-  receives read-only data and does not own domain or inference state.
-
-### Current rendering and frame usage
-
-The current world render order in `Simulator::render()` is:
-
-1. `Environment` grid/map/editor content.
-2. SLAM occupancy, corrected pose, and predicted pose.
-3. LiDAR rays/hits.
-4. AMCL particles, estimate, covariance, and odometry.
-5. Active path.
-6. Ground-truth AMR and selection outline.
-7. Toolbar and Inspector in the UI view.
-
-Important frame details:
-
-- `LocalizationVisualization::drawScan()` receives
-  `m_scanGroundTruthPose`. The current LiDAR overlay is therefore positioned
-  from truth for display.
-- AMCL particles and estimates, odometry, and path geometry are represented in
-  the simulator/map world frame.
-- SLAM inference stays in its local frame. `SlamVisualization` applies
-  `m_slamDisplayOrigin`, captured from truth at SLAM bootstrap/reset, only to
-  align the display. This is allowed by `SlamV1Spec.md` only as a clearly
-  display-only transform.
-- The current single composite canvas hides these frame differences. Moving the
-  layers into a Robotics view without an explicit frame policy would preserve a
-  subtle truth dependency in presentation and make Camera Follow ambiguous.
-
-### Current layout, toolbar, Inspector, and camera
-
-- `ApplicationLayout` calculates only three rectangles: toolbar, simulation
-  viewport, and Inspector. The default is 1440x900 with a 360-pixel Inspector.
-- `EditorToolbar` owns seven editor button rectangles, hit testing, active style,
-  and text drawing.
-- Toolbar labels use the first loadable Windows font from Segoe UI, Arial,
-  Calibri, and Consolas; the selected font is not exposed diagnostically.
-- Toolbar text uses character size 14. Horizontal centering uses only
-  `getLocalBounds().size.x`, ignores the bounds origin, can produce fractional
-  coordinates, and vertical placement is a fixed `+8` rather than true glyph
-  bounds centering.
-- SFML font texture smoothing is enabled by default. The UI view is otherwise a
-  1:1 pixel-space view, so unintended world-view scaling is not the primary
-  cause at the default size.
-- `InspectorPanel` is already sectioned by four tabs, but every section is a
-  title plus one newline-delimited string. Labels and values therefore cannot
-  form stable columns, and long fields such as Reason, Message, and stop reason
-  compete with ordinary scalar rows.
-- Camera state is a single `sf::View` (`m_simView`). Resize preserves center and
-  derives a zoom factor from the previous default size. Wheel zoom and drag pan
-  are implemented directly in `Simulator::processEvents()`. There is no follow
-  state or separate per-view camera.
-
-### Existing tests
-
-- `SimulatorRuntimeTests.cpp` covers runtime seams, sensor fan-out, RNG
-  independence, localization-driven navigation, layout geometry, toolbar hit
-  geometry, Inspector tabs, and scroll behavior.
-- `LocalizationSensorTests.cpp` covers visualization defaults, LiDAR render
-  subsampling, hit semantics, and covariance geometry.
-- `SlamIntegrationTests.cpp` proves the SLAM display transform is observational.
-- SLAM/localization algorithm, integration, stress, and benchmark suites provide
-  regression coverage but do not inspect a desktop window.
-- No current automated test checks font raster quality, text centering on a
-  real display, view-switch rendering, Camera Follow state, screenshot output,
-  or end-to-end desktop interaction.
-
-## 2. Problems Identified
-
-1. The single canvas mixes simulation truth, editor content, navigation output,
-   AMCL, odometry, LiDAR, and SLAM. This makes layer meaning and frame provenance
-   difficult to understand.
-2. `Simulator` directly owns both visualization leaf objects and every render
-   decision. Adding further robotics layers will keep expanding its presentation
-   responsibility.
-3. A simple `if (Robotics)` around existing draw calls is unsafe: current LiDAR
-   placement reads truth, while SLAM uses a truth-derived display transform.
-4. A Robotics camera cannot be specified correctly until the estimated follow
-   source and display frame are explicit.
-5. A single camera would cause Simulation pan/zoom/follow state to leak into the
-   Robotics view and vice versa.
-6. Toolbar text is small and not centered from complete glyph bounds. Fractional
-   placement, font smoothing, fallback font differences, and Windows DPI can all
-   contribute to the reported blur.
-7. Inspector content is structurally encoded in strings. Alignment, wrapping,
-   styling, measurement, and testability are coupled.
-8. The current UI regression tests validate geometry/state only. They cannot be
-   used as desktop visual or interaction acceptance.
-9. The installed Windows automation can launch and uniquely target the SFML
-   window, and it can inject keys/clicks/scroll/drag in principle. In this
-   environment its screenshot capture failed twice with
-   `SetIsBorderRequired failed: unsupported interface (0x80004002)`. The SFML
-   accessibility tree exposes only the native window chrome, not canvas
-   controls. Safe coordinate playtesting therefore cannot currently close the
-   observe-act-verify loop.
-
-## 3. Proposed UI Architecture
-
-The requested separation is sound, with one qualification: the milestone should
-not create a symmetric `SimulationVisualizer` merely for naming symmetry. The
-existing `Environment`, AMR drawing, selection drawing, and path drawing already
-form a coherent Simulation render path. Extracting all of them would add churn
-without improving the inference boundary.
-
-Recommended top-level structure:
-
-```text
-Simulator
-  owns lifecycle, runtime state, event routing, and view-mode coordination
-  |
-  +-- ApplicationLayout
-  |     owns rectangles for top bar, editor tools, view controls,
-  |     viewport, and Inspector
-  |
-  +-- ViewControlBar
-  |     owns Simulation / Robotics / Follow presentation and hit testing
-  |
-  +-- ViewportCamera x 2
-  |     owns per-view center, zoom, pan, and follow state
-  |
-  +-- Simulation render path
-  |     Environment + path result + AMR truth + selection
-  |
-  +-- RoboticsVisualizer
-  |     consumes a read-only presentation snapshot
-  |     +-- LocalizationVisualization
-  |     +-- SlamVisualization
-  |     +-- LiDAR / odometry / path presentation
-  |
-  +-- InspectorPanel
-        consumes read-only structured diagnostics
-```
-
-`Simulator` should retain top-level render ordering and mode transitions, but it
-should no longer know the draw order of individual robotics layers.
-
-## 4. RoboticsVisualizer Design
-
-### Placement
-
-Create a cross-subsystem presentation directory:
-
-```text
-include/visualization/
-src/visualization/
-```
-
-`RoboticsVisualizer` does not belong under `slam/`, `localization/`, or `ui/`:
-it composes several robotics result types, draws inside a world viewport, and is
-not a widget or an inference subsystem.
-
-### Read-only input contract
-
-Introduce a narrow `RoboticsVisualizationData` value/reference aggregate. It may
-contain:
-
-- AMCL particles, estimate, statistics, and layer options;
-- latest immutable `LaserScan`;
-- an optional estimated pose at which to display the scan;
-- odometry pose and initialized flag;
-- `SlamUpdateResult`, `SlamOccupancyGrid`, and an explicitly named
-  `slamLocalToDisplay` transform;
-- presentation-ready path vertices/waypoints;
-- the selected Robotics follow source/status.
-
-It must not contain:
-
-- mutable references or pointers;
-- `AMR`;
-- `Environment`;
-- `Simulator`;
-- `LidarSimulator` or `OdometrySimulator`;
-- `AmclLocalizer` or `SlamFrontend` objects;
-- RNGs, update callbacks, reset callbacks, planners, controllers, or map-edit
-  commands.
-
-The public header should depend on result/data types, not inference owners.
-`SlamVisualization.hpp` should also stop including `SlamFrontend.hpp` when its
-actual needs are only SLAM result/grid types.
-
-### Internal responsibilities
-
-`RoboticsVisualizer` should own:
-
-- `LocalizationVisualization` and `SlamVisualization` instances;
-- presentation options and layer order;
-- cache invalidation/rebuild calls for particle and SLAM geometry;
-- estimated scan-anchor selection according to an approved display-frame rule;
-- drawing of presentation-ready navigation path geometry;
-- an optional estimated follow target result.
-
-It must not own sensor acquisition, estimator cadence, map matching, particle
-updates, path planning, navigation control, or simulation state.
-
-### First-version frame policy
-
-Recommended policy, pending approval:
-
-- Use the map/world display frame as the Robotics canvas frame.
-- Draw AMCL, odometry, and path in their existing world coordinates.
-- Draw the SLAM-local grid/poses through the existing display-only bootstrap
-  transform, with that provenance labeled in Inspector.
-- Draw LiDAR from an estimated anchor selected for the Robotics view, never from
-  `m_scanGroundTruthPose`.
-- Do not draw the ground-truth AMR or editor cursor/selection in Robotics view.
-- Do not silently use truth as a fallback when an estimate is unavailable. Show
-  an explicit unavailable state and retain the previous camera center.
-
-This preserves the existing approved SLAM inference boundary while making
-truth-derived display alignment visible and one-way.
-
-## 5. Simulation / Robotics View Ownership
-
-### Simulation view
-
-Owns presentation of:
-
-- editable `Environment` grid, boundary, obstacles, work zones, start, and goal;
-- editor cursor preview and selection;
-- ground-truth AMR body;
-- the current planned/executed path as simulation/navigation output;
-- Simulation camera follow targeting the ground-truth AMR pose.
-
-It must not draw SLAM occupancy, SLAM pose, AMCL particles/covariance, odometry,
-or robotics LiDAR overlays after the split.
-
-### Robotics view
-
-Owns presentation of:
-
-- SLAM occupancy and corrected/predicted poses;
-- AMCL particles, estimate, and covariance;
-- LiDAR rays/hits anchored to an approved estimated pose;
-- odometry;
-- navigation path result;
-- Robotics camera follow targeting an approved estimated pose.
-
-It must not draw or query ground-truth AMR pose for camera follow. Any
-truth-derived transform or error diagnostic remains explicitly display-only and
-must not be returned to AMCL, SLAM, navigation, or control.
-
-### Mode behavior
-
-- Switching views changes rendering, active camera, pointer routing, and visible
-  editor controls. It does not reset or pause simulation, AMCL, SLAM, path
-  execution, or RNG state.
-- Map-edit clicks and editor tool shortcuts operate only in Simulation view.
-- Runtime/navigation/localization commands may remain global if intentionally
-  approved, so the robot can be driven while observing Robotics view.
-- Each view retains independent center, zoom, pan, and follow state.
-- Inspector remains a shared diagnostics surface and does not become a large
-  canvas.
-
-## 6. Inspector Table Design
-
-Replace the internal newline-string model with a small presentation model, not a
-generic GUI framework:
-
-```text
-InspectorSection
-  title
-  rows: InspectorRow[]
-      label
-      value
-      optional semantic color
-  blocks: InspectorBlock[]
-      label/title
-      multiline text
-      optional semantic color
-```
-
-Layout rules:
-
-- Keep the existing Map, Navigation, Localization, and SLAM tabs and independent
-  scrolling.
-- Use one computed label column and one value column per panel width. Values are
-  left aligned from a common x-coordinate; numbers are not forced into a
-  monospaced font.
-- Clamp the label column to a readable range rather than hard-coding positions
-  for 360 pixels only.
-- Measure every rendered row/block after wrapping, and derive content height from
-  those measurements before scroll clamping.
-- Use full-width multiline blocks for validation messages, Application Status,
-  planning Message, execution stop reason, localization Reason/explanation, and
-  SLAM frame/provenance notes.
-- Preserve every currently displayed field and shortcut hint. Information may be
-  regrouped, but not silently removed.
-- Keep the legend compact in the footer or move it to a clearly bounded
-  Robotics-layer section only if desktop review proves the footer is too dense.
-- Inspector must receive data and format it; it must not draw maps, particle
-  clouds, plots, or other large visualization.
-
-Recommended per-tab grouping:
-
-- Map: Cursor, Map Stats, Validation, Selected Object, Start, Goal, controls,
-  application status.
-- Navigation: Robot State, mode/start source, planning, execution, controls.
-- Localization: Primary State, Estimate, Confidence, Particle Filter, Sensor,
-  Recovery, display-only Diagnostics, layers, controls.
-- SLAM: State, local pose, Scan Matching, map statistics, lifecycle, display
-  provenance, layers, controls.
-
-## 7. Toolbar Typography Fix Strategy
-
-Do not choose a font-smoothing setting from code inspection alone. Use a small
-A/B matrix and desktop screenshots.
-
-Implementation strategy:
-
-1. Record the loaded font path/name in a diagnostic log or debug-only label so
-   fallback behavior is observable.
-2. Center text using the complete local bounds:
-   subtract `bounds.position`, include `bounds.size`, and round the final x/y to
-   integer UI pixels.
-3. Replace fixed `+8` vertical placement with true visual-bounds centering.
-4. Compare character sizes 14, 15, and 16 using `Select [S]`, `Obstacle [O]`,
-   `Erase [E]`, and the widest labels at default and narrow window sizes.
-5. Keep the UI view in integer pixel space and pixel-snap button rectangles when
-   proportional widths produce fractional coordinates.
-6. Compare SFML smoothing on/off. Keep smoothing on unless screenshots show a
-   repeatable improvement from disabling it; unsmoothed small glyphs may become
-   jagged rather than clearer.
-7. Verify Windows display scaling at the available 100%, 125%, and 150% settings
-   where practical. Do not change system DPI settings automatically.
-8. Apply the same centering helper to the new view controls and Inspector tabs so
-   typography does not diverge.
-
-Automated tests may prove integer alignment, bounds containment, non-overlap, and
-stable geometry. Only desktop screenshots/human inspection can accept clarity.
-
-## 8. Camera Follow Design
-
-Introduce a small `ViewportCamera` state/controller independent of robot and
-estimator classes.
-
-Owned state:
-
-- `sf::View`;
-- default viewport size and current zoom factor;
-- follow enabled flag;
-- pan-in-progress flag and last pan pixel;
-- last valid follow target, if any.
-
-Operations:
-
-- `resize(viewportRect)`: preserve center, zoom factor, and follow state;
-- `zoom(factor)`: change view size only; do not disable follow;
-- `beginPan(pixel)`: begin pan and immediately disable follow;
-- `panTo(pixel, mapPixelToCoords callback/input)`: deterministic delta move;
-- `endPan()`;
-- `setFollowEnabled(bool)`;
-- `recenter(target)`: set center exactly to target, without changing view size;
-- `updateFollow(optionalTarget)`: if enabled and a target exists, set center
-  exactly once per frame; no interpolation or damping.
-
-Target rules:
-
-- Simulation camera receives `AMR` ground-truth pose only while Simulation view
-  is active.
-- Robotics camera receives only an estimated display pose selected by
-  `RoboticsVisualizer`/presentation policy.
-- If the Robotics estimate is invalid, do not fall back to AMR truth. Keep the
-  prior center and show Follow as waiting/unavailable.
-- Re-enabling Follow recenters immediately on the current valid target and keeps
-  the exact current zoom.
-- Manual pan disables Follow for only the active view. View switching does not
-  copy or reset camera state.
-- `Ctrl+0` behavior must be decided explicitly: recommended behavior is reset
-  only the active camera to its default size/center and disable Follow, rather
-  than reset both hidden and visible cameras.
-
-## 9. UI Playtest Strategy
-
-### Required workflow after implementation
-
-1. Run a clean application build.
-2. Launch the real `build/CtrlKine-AMR.exe` from the repository working
-   directory so relative config/map paths are deterministic.
-3. Target the exact SFML window title/process and set a known window size.
-4. Capture a baseline screenshot before input.
-5. Exercise view switching, editor tools, navigation, localization/SLAM layers,
-   Inspector tabs/scroll, zoom, pan, and Follow.
-6. Capture screenshots after each meaningful state change.
-7. Inspect clipping, overlap, label/value alignment, typography, active states,
-   frame labels, camera center, and layer provenance.
-8. Record issues, modify implementation, rebuild, relaunch from a clean process,
-   and replay the same scenario.
-9. Keep a human acceptance pass for subjective clarity and interaction feel.
-
-### What this environment can currently do
-
-- Build and launch prerequisites are present.
-- The installed Computer Use capability can launch the exact executable,
-  uniquely identify the SFML window, inject keyboard/mouse/scroll/drag input,
-  and close the process.
-- SFML exposes no semantic accessibility nodes for its canvas; only the native
-  window chrome is discoverable. Interaction must therefore use screenshot-
-  derived window-relative coordinates and refresh after each action.
-- Current screenshot capture is blocked by the repeated
-  `SetIsBorderRequired ... 0x80004002` error. Because there is no safe current
-  observation, this turn did not attempt coordinate interaction and does not
-  claim visual acceptance.
-- No alternate `ffmpeg`, ImageMagick, OBS, MSS, Pillow, pyautogui, pywinauto, or
-  OpenCV capture path is currently installed.
-
-### Infrastructure options
-
-Preferred order:
-
-1. Repair/upgrade the Windows Graphics Capture helper or host support so the
-   existing Computer Use observe-act-screenshot loop works.
-2. If that cannot be made reliable, add a narrow repository-owned capture seam
-   that saves the final SFML framebuffer on an explicit test command/hotkey to a
-   caller-provided temporary path. It must be inactive by default and must not
-   alter inference or normal runtime behavior.
-3. Add `scripts/ui_playtest.ps1` only after the capture decision. It should build,
-   start one process with a known working directory, wait for the exact window,
-   record process/window readiness, and clean up the process. It should not claim
-   visual success by itself.
-4. Store transient screenshots and logs outside the tracked repository or under
-   an explicitly ignored artifact directory.
-
-A launch-only script plus process survival is a smoke test, not UI acceptance.
-
-## 10. Automated Regression Strategy
-
-Keep existing suites and add deterministic non-pixel coverage:
-
-- View mode defaults, switching, and persistence.
-- View-control hit testing and event isolation.
-- Independent Simulation/Robotics camera center, zoom, pan, and follow state.
-- Manual pan disables active-view Follow.
-- Re-enable Follow recenters without changing zoom.
-- Resize preserves zoom and follow state.
-- Missing Robotics estimate never selects AMR truth.
-- Switching views does not reset/mutate AMCL, SLAM, path execution, sensor
-  frames, or RNG sequences.
-- Robotics presentation input is read-only and visualization/cache rebuilds do
-  not mutate inference results or maps.
-- Simulation render policy excludes robotics overlays; Robotics render policy
-  excludes ground-truth AMR/editor overlays.
-- Inspector table measurement, wrapping, per-tab scroll, compact-height footer,
-  and long Reason/Message blocks.
-- Toolbar/view-control text placement is pixel-aligned and remains inside its
-  button bounds for supported widths.
-- Existing SLAM display-transform, LiDAR subsampling, sensor fan-out, and RNG
-  isolation tests remain passing.
-
-Prefer extending `SimulatorRuntimeTests.cpp`, `LocalizationSensorTests.cpp`, and
-`SlamIntegrationTests.cpp` rather than creating screenshot assertions or a new
-test framework. A separate UI-state executable is justified only if runtime-test
-link dependencies become unmanageable.
-
-Final automated sequence remains:
-
-```text
-mingw32-make clean
-mingw32-make all
-mingw32-make test
-mingw32-make test-localization-stress
-mingw32-make test-slam-stress
-mingw32-make localization-benchmark
-mingw32-make slam-benchmark
-```
-
-Automated results are regression evidence. They are not desktop visual or
-interaction acceptance.
-
-## 11. Files Expected to Change
-
-Production/UI integration:
-
-- `include/app/Simulator.hpp`
-- `src/app/Simulator.cpp`
-- `include/ui/ApplicationLayout.hpp`
-- `src/ui/ApplicationLayout.cpp`
-- `include/ui/EditorToolbar.hpp`
-- `src/ui/EditorToolbar.cpp`
-- `include/ui/InspectorPanel.hpp`
-- `src/ui/InspectorPanel.cpp`
-- `include/localization/LocalizationVisualization.hpp`
-- `src/localization/LocalizationVisualization.cpp`
-- `include/slam/SlamVisualization.hpp`
-- `src/slam/SlamVisualization.cpp`
-- `Makefile` (new production directory and explicit runtime-test link objects)
-
-Regression tests:
-
-- `tests/SimulatorRuntimeTests.cpp`
-- `tests/LocalizationSensorTests.cpp`
-- `tests/SlamIntegrationTests.cpp`
-
-Specification/documentation after decisions and implementation:
-
-- `docs/specs/EditorUISpec.md` (currently missing/not started)
-- `docs/specs/README.md`
-- `Document.md`
-- `README.md` if launch/controls change
-- `docs/agent/STATUS.md` only after truthful final verification
-
-The list is expected, not pre-authorized implementation scope. Recheck it after
-the UI specification is approved.
-
-## 12. New Files / Classes Expected
-
-Recommended new production files:
-
-- `include/visualization/RoboticsVisualizer.hpp`
-- `src/visualization/RoboticsVisualizer.cpp`
-  - `RoboticsVisualizer`
-  - `RoboticsVisualizationData`
-  - `RoboticsFollowSource` or equivalent presentation enum
-- `include/ui/ViewportCamera.hpp`
-- `src/ui/ViewportCamera.cpp`
-  - `ViewportCamera`
-- `include/ui/ViewControlBar.hpp`
-- `src/ui/ViewControlBar.cpp`
-  - `ApplicationViewMode`
-  - `ViewControlBar`
-- Optional small `include/ui/UiTextLayout.hpp` if one shared pixel-aligned text
-  helper is needed by both toolbars and Inspector tabs.
-- `scripts/ui_playtest.ps1` only after a working capture/observation path is
-  chosen.
-
-Do not add a generic widget framework, scene manager, event bus, render graph,
-or symmetric `SimulationVisualizer` in this milestone.
-
-## 13. Dependency / Architecture Risks
-
-1. **Truth leakage:** passing `AMR`, `m_scanGroundTruthPose`, or an unlabeled
-   truth transform into Robotics follow or LiDAR anchoring would violate the
-   requested boundary.
-2. **Frame conflation:** AMCL/world, odometry/world, path/world, and SLAM/local
-   cannot be overlaid correctly without an explicit display transform policy.
-3. **Reverse dependency:** `RoboticsVisualizer` must never call reset/update/plan
-   APIs or expose callbacks into inference.
-4. **Header coupling:** including `Simulator`, `AmclLocalizer`, or
-   `SlamFrontend` in the Visualizer public header would make presentation depend
-   on inference owners instead of result types.
-5. **Event leakage:** Robotics clicks must not edit the map, and Inspector/top-bar
-   clicks must not reach either viewport.
-6. **Hidden-state resets:** view switching must not reset RNGs, sensor cadence,
-   estimator state, path progress, or layer options.
-7. **Camera contamination:** a shared view or follow flag would cause pan/zoom
-   state to leak across views.
-8. **Cache invalidation:** moving particle/SLAM geometry ownership can leave stale
-   display data after reset, bootstrap, map revision, or option changes.
-9. **Inspector measurement:** two-column wrapping can undercount content height,
-   break independent scrolling, or overlap the footer at short heights.
-10. **Typography false fix:** disabling smoothing or increasing size without DPI
-    screenshots may trade blur for jagged glyphs or clipping.
-11. **Makefile link gaps:** production wildcard discovery requires the new
-    `visualization` directory in `SRC_DIRS`, and `SimulatorRuntimeTests.exe` has
-    an explicit object list that must include every new linked UI/visualization
-    object.
-12. **Acceptance gap:** process survival or green tests cannot close the current
-    screenshot/interaction acceptance gap.
-
-## 14. Implementation Phases
-
-No phase starts until the decisions in section 16 and an `EditorUISpec.md`
-contract are approved.
-
-### Phase 0 — Approve UI contract and baseline
-
-- Resolve display frame, follow source/default, view-switch placement, and
-  capture strategy.
-- Write/approve `EditorUISpec.md` and update the spec index.
-- Run and record the clean baseline before production edits.
-
-Acceptance: approved requirements and zero unexplained baseline failures.
-
-### Phase 1 — View state, layout, controls, and camera primitives
-
-- Add `ApplicationViewMode`, top-bar/view-control geometry, `ViewControlBar`, and
-  two independent `ViewportCamera` instances.
-- Add pure state/geometry tests before changing render composition.
-
-Acceptance: deterministic switching, event isolation, independent cameras,
-resize/zoom/pan/follow state tests passing; existing render output unchanged.
-
-### Phase 2 — RoboticsVisualizer boundary
-
-- Add the read-only snapshot and `RoboticsVisualizer` composition.
-- Move ownership of localization/SLAM presentation caches/options from
-  `Simulator` into the Visualizer.
-- Remove unnecessary inference-owner includes from presentation headers.
-
-Acceptance: no forbidden dependency, no mutable domain input, observational
-tests pass, and sensor/RNG/SLAM regression stays green.
-
-### Phase 3 — Split render and input paths
-
-- Make Simulation render only truth/editor/path/AMR content.
-- Make Robotics render only approved robotics results.
-- Gate pointer/editor input by active view while preserving continuous runtime.
-
-Acceptance: switching views does not reset runtime; layer-policy tests pass;
-desktop screenshots show no SLAM/AMCL/LiDAR overlays in Simulation view.
-
-### Phase 4 — Inspector structured table
-
-- Replace string bodies with rows plus multiline blocks.
-- Preserve all existing fields, tabs, footer behavior, and scroll offsets.
-
-Acceptance: long Reason/Message cases wrap without overlap, all scalar values
-align in two columns, short-height behavior remains safe, and no information is
-lost.
-
-### Phase 5 — Toolbar and shared typography
-
-- Implement bounds-aware integer-pixel centering.
-- Run the character-size/smoothing/DPI screenshot matrix.
-- Apply the accepted metrics to editor and view controls.
-
-Acceptance: no clipping at supported widths and human approval of
-`Select [S]`, `Obstacle [O]`, and all other labels at the agreed DPI cases.
-
-### Phase 6 — Deterministic Camera Follow integration
-
-- Wire Simulation truth target and approved Robotics estimated target.
-- Implement pan-disable, re-enable/recenter, zoom preservation, and invalid
-  estimate behavior.
-
-Acceptance: deterministic camera-state tests pass and desktop playtest confirms
-the target stays centered with unchanged zoom and no smooth damping.
-
-### Phase 7 — Playtest loop and final verification
-
-- Establish a working capture path, then execute the full real-desktop scenario.
-- Fix concrete findings and replay from a clean process.
-- Run the complete automated regression/stress/benchmark sequence.
-- Update user documentation and `STATUS.md` with separate automated and desktop
-  evidence.
-
-Acceptance: zero functional regression failures, completed screenshot-backed
-desktop checklist, human visual/interaction approval, and no unresolved
-important architecture finding.
-
-## 15. Verification / Acceptance Gates
-
-### Architecture gate
-
-- `RoboticsVisualizer` depends only on presentation/result types.
-- No Robotics follow or LiDAR path reads `AMR` truth.
-- SLAM display alignment remains labeled, one-way, and inference-neutral.
-- View switch and visualization option changes do not affect sensor or inference
-  sequences.
-
-### Automated regression gate
-
-- Targeted UI/camera/visualization tests pass after each phase.
-- Normal regression reports 0 FAIL.
-- Localization and SLAM stress suites report 0 functional failures.
-- Benchmarks complete with finite results; timing changes are reported, not used
-  as hardware-sensitive functional gates.
-
-### Desktop visual gate
-
-- Simulation and Robotics views are visibly distinct.
-- Simulation contains no robotics estimation overlay.
-- Robotics contains no truth AMR/editor overlay and clearly identifies display
-  frame/follow source.
-- Toolbar text is crisp and centered at approved window/DPI cases.
-- Inspector rows align; long fields wrap; no clipping, overlap, or footer
-  collision occurs.
-- Active view, active tool, active tab, layer state, and Follow state are obvious.
-
-### Desktop interaction gate
-
-- Switch views repeatedly without reset or state loss.
-- Place/select/delete/rotate/draw only in Simulation view.
-- Pan and zoom independently in both views.
-- Manual pan disables active-view Follow.
-- Re-enable Follow and confirm immediate recenter with unchanged zoom.
-- Confirm Simulation follows truth and Robotics follows only the approved
-  estimate.
-- Exercise Inspector tabs/scroll and relevant navigation/localization/SLAM
-  controls.
-- Capture before/after screenshots for every major state.
-
-### Reporting gate
-
-Final status must list separately:
-
-- build result;
-- targeted and full regression totals;
-- stress/benchmark results;
-- launch/process smoke result;
-- screenshot-backed desktop visual result;
-- real interaction result;
-- remaining human-only or environment-blocked checks.
-
-## 16. Open Questions / Decisions
-
-1. **Robotics follow source:** recommend AMCL estimate as the first-version
-   default because AMCL, odometry, and current path are already in the map/world
-   display frame. Should SLAM follow be selectable now, or deferred until a
-   dedicated SLAM-local view/frame selector exists?
-2. **Follow default:** should Simulation start with Follow enabled, or preserve
-   the current fixed camera until the user enables it? Recommendation: preserve
-   current behavior by defaulting Follow off, while making the control visible.
-3. **Robotics display context:** recommendation is no ground-truth AMR/editor
-   overlay, with SLAM occupancy as the primary map layer and the existing
-   truth-derived SLAM alignment explicitly labeled display-only. Should a known
-   reference map layer be shown, and if so should it default off?
-4. **LiDAR anchor in Robotics view:** recommendation is the selected follow/frame
-   estimate (AMCL for the first version), with no truth fallback. Should odometry
-   be an explicit user-selectable alternative when AMCL is invalid?
-5. **View switch control:** recommendation is a visible segmented
-   `Simulation | Robotics` control plus a separate Follow toggle in the top bar.
-   Confirm whether a keyboard shortcut is also required.
-6. **`Ctrl+0` scope:** recommendation is reset only the active camera and disable
-   its Follow state. Confirm whether users expect both cameras to reset.
-7. **Capture infrastructure:** should the next milestone first fix the current
-   Windows Graphics Capture failure, or approve a narrow in-app framebuffer
-   capture hook? Without one of these, desktop acceptance remains human-only.
+# Simulation / Robotics Visualization & Desktop UI Milestone
+
+Status: Recommended implementation plan; implementation has not started.
+Reviewed: 2026-09-05, local HEAD e29839ae5f8979abb98e1b38aed979a59b113da0.
+
+This plan supersedes the previous Plan.md. It was formed from AGENTS.md,
+STATUS.md, all existing specs, subsystem interfaces, runtime/render/input code,
+and relevant tests before reading the previous plan. It records the recommended
+architecture and execution order, not completed functionality or permission to
+start implementation in this planning turn.
+
+## 1. Scope and verified baseline
+
+This turn changes only Plan.md. Production code, tests, Makefile, STATUS.md,
+and the user's existing AGENTS.md modification remain untouched. No build,
+application launch, desktop playtest, commit, push, or remote synchronization was
+performed. Historical test totals below are read from STATUS.md, not rerun.
+
+The next implementation milestone covers:
+
+1. Separate Simulation presentation from robotics estimation presentation.
+2. Embed an independent RoboticsVisualizer subsystem in the existing window.
+3. Provide explicit fixed-frame selection, native-frame layers and availability.
+4. Remove SLAM, AMCL, odometry and robotics scan overlays from Simulation.
+5. Convert Inspector content to sections with two-column property tables.
+6. Correct Toolbar typography and pixel alignment, then inspect desktop clarity.
+7. Add Simulation Follow ON by default and pan-to-disable behavior.
+8. Maintain independent Simulation and Robotics camera state.
+9. Establish a repeatable real desktop observe-act-verify workflow.
+10. Require desktop acceptance separately from automated regression.
+
+Keep the single-threaded SFML loop and existing inference, sensor cadence, RNG
+fan-out, navigation modes, collision rollback and persistence behavior. Exclude
+ROS integration, a general TF server, asynchronous rendering, docking/pop-out
+windows, a widget framework, new SLAM algorithms, estimator fusion, map
+registration, SLAM-based navigation and camera smoothing. Do not create a
+SimulationVisualizer solely for naming symmetry. Shared sensor DTO relocation
+out of localization/ is also outside this milestone.
+
+### Source-backed findings
+
+| Area | Current implementation and implication |
+|---|---|
+| Application | src/main.cpp constructs Simulator. Simulator::run performs processEvents, update(dt), render. There is one simulation camera plus a pixel-space UI view. |
+| Truth/editor | Environment owns MapData and editor tool state. Simulator owns AMR, selection, validation and path execution. Keep these authorities. |
+| Motion/sensors | Simulator::update rolls back collisions before updateLocalization acquires one immutable OdometryDelta + LaserScan pair. AMCL and SLAM share measurements with separate RNG streams. |
+| AMCL | AmclLocalizer accumulates odometry; particles and estimate are committed when updateWithScan succeeds. The latest estimate can predate the latest acquired scan. Initialization may provide an estimate before a scan update. |
+| SLAM | SlamFrontend owns its local grid and bootstraps identity at the first informative scan. resetSlamForCurrentPose and bootstrap currently set a truth-derived display origin. |
+| Rendering | Simulator::render draws Environment, SLAM, truth-anchored scan, AMCL/odometry, path, then truth AMR on one canvas. Leaf renderers already exist but Simulator owns their options/caches. |
+| Coordinates | MapCoordinateSpec and SlamV1Spec use x-right, y-down and the existing yaw convention. SLAM cell conversion is relative to its own grid origin, independent of CoordinateMapper. |
+| Odometry | OdometrySimulator::reset seeds its accumulated pose with the supplied truth pose. Kidnap rebase preserves that accumulated belief. It is not an independently published ROS odom frame. |
+| Cache | SlamVisualization bakes displayOrigin into cell vertices but keys its cache only by map revision. SlamOccupancyGrid::reset returns revision to zero. Frame/session changes need explicit cache handling. |
+| UI | ApplicationLayout owns three rectangles. EditorToolbar owns seven buttons and hit testing. Inspector owns four tabs and separate scroll offsets; section bodies are newline strings. |
+| Text | Toolbar centers using text width only, omits local-bounds position, uses fixed vertical +8 and fractional button widths. These are source findings, not a verified diagnosis of every blur cause. |
+| Events | Hotkeys run before pointer routing. Pan is a single boolean. Held driving keys are polled without an application-focus guard. New view routing must address capture and focus explicitly. |
+| Verification | Runtime tests inspect headless seams, geometry and state, not a desktop interaction loop. STATUS records build, 226 normal passes, 4 localization stress passes and 5 SLAM stress passes; manual UI acceptance remains outstanding. |
+
+The specs index is incomplete: it omits the existing SlamV1Spec and still marks
+some implemented test coverage as not created. EditorUISpec is not present.
+PathPlanner has clearance and explicit-pose overloads beyond the original
+one-argument spec; preserve them, without extending or redesigning navigation.
+During a later authorized specification phase, document this milestone's
+contracts without rewriting unrelated specifications.
+
+## 2. Architecture and ownership
+
+Recommended composition:
+
+    Simulator
+      lifecycle / runtime commands / accepted motion / sensor fan-out
+      presentation adapter: coherent read-only observations
+      ApplicationLayout + view headers: rectangles / hit targets / focus
+      Simulation camera
+      Simulation render path: Environment + path + AMR + selection
+      RoboticsVisualizer
+        Robotics camera state per fixed frame
+        native-frame layer options / status / caches
+        LocalizationVisualization + SlamVisualization + reference/path layers
+      InspectorPanel: structured diagnostic sections / tables / scrolling
+
+### RoboticsVisualizer boundary
+
+Add include/visualization/ and src/visualization/. RoboticsVisualizer belongs here
+because it presents multiple subsystems' results. It owns robotics draw order,
+layer options, geometry caches, frame availability and its camera. Simulator
+owns the Simulation camera and delegates bounded pointer/camera actions to the
+RoboticsVisualizer; it does not reach into individual robotics layer renderers.
+
+Use a small concrete API: supply read-only presentation data, assign viewport,
+handle camera/layer actions, obtain display status, draw to an sf::RenderTarget.
+Simulator remains responsible for window lifecycle, global UI composition and
+dispatching runtime commands. View widgets emit typed actions; the Visualizer
+cannot reset an estimator or execute a robot command.
+
+Robotics inputs may contain result types, const particle/grid views, known-map
+geometry, path geometry, observation stamps and paired scan anchors. They must
+not contain AMR, Environment, Simulator, estimator owners, sensor simulators,
+mutable domain references, RNGs or callbacks into runtime/inference. Replace
+SlamVisualization.hpp's unnecessary SlamFrontend.hpp include with actual
+result/grid dependencies.
+
+The application adapter is the only place that reads multiple owners to assemble
+presentation data. Do not move acquisition, SLAM prediction, AMCL cadence or
+navigation decisions into presentation. The adapter may format provenance and
+track observation identity; it does not compute a new pose estimate.
 
+Retain existing leaf renderers in their directories initially, adapting their
+interfaces as needed. A mass file move is not necessary for this boundary.
+
+### Data lifetime and update ordering
+
+Use one frame-scoped read-only input aggregate. Small metadata/poses are values;
+large arrays/grids may be borrowed only during the synchronous presentation
+update. A renderer must not retain those references across a subsequent domain
+update/reset. Retained scan samples are owned bounded copies; retained geometry
+is renderer-owned. No full map copy every render frame and no new threading.
+
+Order each iteration as:
+
+1. Route window/UI/input events and execute authorized runtime commands.
+2. Apply motion, collision rollback and existing sensor/estimator updates.
+3. Publish coherent presentation records and refresh changed geometry.
+4. Update Follow from accepted/published poses and refresh cursor conversion.
+5. Render Simulation and Robotics inside their bounds, then pixel-space UI.
+
+A window/view/frame/layer operation changes presentation only. It must not reset
+or pause inference, regenerate measurements, consume RNG, or change path
+progress. Real wall-clock dt may vary with rendering cost; deterministic
+invariance checks must compare identical accepted motions/measurement inputs,
+not assume two live runs have identical timing.
+
+## 3. Fixed frames: native estimates first
+
+### Coordinate contract
+
+A fixed frame is the reference in which layer coordinates are interpreted.
+Camera center/zoom/follow controls where that reference is viewed; moving a
+camera does not transform the data into a new frame. A grid's origin offset is
+also distinct from an inter-frame transform.
+
+Retain project world units and x-right/y-down coordinates. Positive yaw follows
+the existing cos/sin convention and appears clockwise on screen. Do not relabel
+distances as meters or change to ROS axes in this UI milestone.
+
+The mini-RViz concept means explicit frame identity, independent display layers,
+per-layer availability/provenance and a camera. It does not mean the repository
+already implements ROS frame semantics. REP 105 distinguishes map corrections
+from continuous drifting odometry; the current accumulated odometry pose alone
+does not implement that transform tree.
+Reference: [REP 105, upstream source](https://raw.githubusercontent.com/ros-infrastructure/rep/master/rep-0105.rst).
+
+| Frame / coordinate domain | Authority and lifetime | First-version use |
+|---|---|---|
+| sim_world | MapData coordinates; AMR truth expressed here | Simulation only, plus explicitly labeled diagnostic values in Inspector |
+| map | AMCL known-map coordinates, currently supplied by the same MapData | Robotics fixed frame for known map, AMCL and existing planned path |
+| slam_local | SLAM's first informative scan establishes identity; a new SLAM reset creates a new epoch | Default Robotics fixed frame for estimated occupancy and SLAM poses |
+| base / laser | Measurement-local geometry; scan carries base-to-sensor x/y/yaw extrinsics | Compose with the observation's matching estimated base pose |
+| legacy world-seeded odometry | Accumulated odometry initialized in the current map/world coordinate chart | Optional map-mode diagnostic marker only; not an odom fixed-frame provider |
+
+The current sim_world-to-map coordinate correspondence is identity because AMCL
+uses that exact map representation. This says nothing about AMCL pose accuracy.
+It must not be generalized to imported maps or SLAM maps. A known-map layer is
+explicitly labeled “Known map (simulator-provided)” and is never copied into SLAM.
+
+### First-version fixed-frame selector
+
+Provide a visible selector with exactly two choices:
+
+- SLAM local: default. Render occupancy and valid SLAM pose/prediction natively.
+- Map: render known reference map, AMCL particles/estimate/covariance and optional
+  existing navigation path in their native map coordinates.
+
+AMCL initialization is not required to select Map or view its reference map.
+SLAM local before bootstrap shows axes and “Waiting for informative scan”; do
+not invent an identity robot pose from a default-constructed result.
+
+Keep layer preferences per frame. Incompatible layers are visibly unavailable,
+with a reason such as “No map ↔ slam_local transform”; they are not silently
+drawn at identity. Changing an Inspector tab does not select a fixed frame.
+
+### Deliberately absent cross-estimator transform
+
+There is no estimated map-to-slam_local registration in the current project.
+Do not reuse m_slamDisplayOrigin in the new default Robotics pipeline. The SLAM
+spec permits truth for labeled test/display diagnostics; it does not require
+truth-aligned rendering or establish an estimated frame relationship.
+
+Do not recompute a transform each frame from AMCL pose and SLAM pose merely to
+make their robot markers coincide. That would absorb their disagreement and move
+the SLAM grid as estimates change. Do not use camera Follow source to select a
+scan anchor, establish a fixed frame, or align maps.
+
+Truth-aligned cross-frame comparison is deferred from the first version. If
+requested later, it needs a separate explicit diagnostic mode with transform
+source, direction, captured observation, session identity and visible truth
+provenance. It must remain outside inference and ordinary Robotics Follow.
+A genuine estimated registration is a separate algorithm milestone.
+
+### Scan geometry and temporal pairing
+
+For a valid observation at sequence k, with fixed frame F:
+
+    p_F = T_F_base(k) * T_base_laser(k) * p_laser(k)
+
+The base pose, scan and extrinsics must refer to that observation. Apply
+extrinsics exactly once. Render subsampling stays independent from AMCL selected
+beams and SLAM matching beams. Invalid ranges do not render as hits; max-range
+rays may be shown clamped to range, but never as occupied endpoints.
+
+- SLAM local: pair each processed scan with that SlamUpdateResult. A rejected
+  match is labeled prediction-only, not corrected. Lost/invalid states remain
+  explicit; suppress scan geometry if no usable same-observation pose exists.
+- Map: retain the scan plus final AMCL estimate from the same successful
+  updateWithScan dispatch. Between AMCL updates show the last paired observation
+  with its age/sequence. Never attach the current m_currentScan to an older AMCL
+  estimate. Initialization alone does not supply a paired scan.
+- Prediction-only/all-max AMCL commits can retain rays with weak-observation
+  status; a failed commit does not relabel an older observation as current.
+- No truth, legacy odometry, or other estimator fallback when a pair is missing.
+  Do not force more AMCL updates or implement display-side extrapolation.
+- Camera Follow remains independent of scan visibility and scan source.
+
+## 4. Presentation records, invalidation and layers
+
+Add presentation metadata at the application boundary rather than changing
+sensor measurements or inference algorithms:
+
+- monotonically increasing acquisition sequence and simulation-time stamp;
+- map session/generation plus geometry revision;
+- SLAM epoch plus map revision;
+- AMCL initialization epoch and committed-observation sequence;
+- layer frame identity, data validity and observation quality/age.
+
+Do not use sensorUpdateCount alone as a timestamp: not every committed AMCL
+update increments it. Use dispatch.amclUpdated and the acquisition sequence.
+Clear paired samples on the relevant initialization/reset; keep at most the
+latest usable pair per estimator. Layer status distinguishes Disabled, Ready,
+Waiting for data, No transform and Stale/Degraded.
+
+Cache SLAM vertices in slam_local, without a baked truth transform. Key occupancy
+by epoch + revision + grid configuration identity. Known-map geometry also needs
+map identity/generation, not revision alone. Particle geometry refreshes on AMCL
+initialization/commit; turning a hidden layer back on must use current data.
+Camera changes must not rebuild full map geometry.
+
+| Event | Required presentation handling |
+|---|---|
+| Pan, zoom, focus, frame/layout change | Preserve domain state and layer preferences; select only matching frame data/camera |
+| SLAM-only reset | Clear SLAM pair/cache, increment SLAM epoch, invalidate its camera frame; preserve AMCL/map/Simulation state |
+| Delayed SLAM bootstrap | Establish the new local frame at that informative observation, not at reset time |
+| AMCL local/global reset | Increment AMCL epoch, clear its scan pair/particles until republished; preserve SLAM and its camera |
+| Robot reset / configured Start synchronization | Mirror existing runtime reset effects; publish all affected epochs, never replay pre-reset samples |
+| Successful map load or clear | New map generation, clear invalid path/pairs/caches according to existing resets; no samples from the previous map |
+| Map geometry edit | Rebuild reference cache and mark older AMCL scan context stale until refreshed; preserve current inference policy and SLAM session |
+| Kidnap | Preserve existing odometry-rebase/estimator behavior; invalidate pre-teleport scan presentation until fresh processing; never realign SLAM with truth |
+| Lost / invalid estimate | Preserve map as appropriate, show quality/reason, suspend Follow target; never show stale data as a new valid correction |
+
+Map load failure must leave presentation and runtime sessions intact. Coordinate
+discontinuities reset only the affected camera context; ordinary geometry
+revisions do not recenter cameras.
+
+### Layer allocation and defaults
+
+| Layer | Simulation | Robotics: SLAM local | Robotics: Map |
+|---|---|---|---|
+| Editable map, work zones, Start/Goal, cursor, selection | Yes | No | No editor affordances |
+| Ground-truth AMR | Yes | No | No |
+| Executed/planned path | Yes | Unavailable | Optional OFF, labeled current navigation result |
+| SLAM occupancy / pose / predicted pose | No | ON, validity/status aware | Unavailable |
+| Known reference map | Via Environment | Unavailable | ON, simulator-provided label |
+| AMCL particles / estimate / covariance | No | Unavailable | ON, validity/status aware |
+| Paired LiDAR rays / hit points | No | OFF / OFF, SLAM pair | OFF / OFF, AMCL pair |
+| Legacy world-seeded odometry | No | Unavailable | OFF, diagnostic provenance label |
+
+Retain F1/F2/F3/F4/F6/F7/F8 as shortcuts for their documented layer/diagnostic
+actions, routed to Robotics options even while Simulation has focus. An
+incompatible layer reports unavailable without switching frames. Expose clickable
+layer controls so the workflow is discoverable; SLAM layers also have visible
+toggles. Frame axes, legend and status must distinguish free/occupied/unknown,
+estimator source and prediction/correction, without relying only on color.
+
+## 5. Embedded layout and event routing
+
+Recommendation: show Simulation and Robotics side by side at the default
+1440×900 size, with the shared 360-pixel Inspector on the right. This supports
+driving while observing estimation without repeated view switching.
+
+Use a simple fixed split, not a draggable docking system. Both panes have a
+pixel-space header with name, focus indication and camera controls; Robotics
+also exposes Fixed Frame. EditorToolbar stays above the workspace.
+
+Calculate every rectangle in ApplicationLayout. As an initial contract, require
+at least 400 pixels per pane plus an 8-pixel divider for split mode. Below that
+workspace width, use an explicit Simulation / Robotics tab to show one pane at
+a time. Preserve both subsystem instances and all camera state. At 1024×720 this
+normally becomes the tabbed layout; do not squeeze text or change world units.
+Confirm these product thresholds during the desktop contract review.
+
+Pointer and keyboard rules:
+
+1. Handle close/resize/focus/capture cancellation before ordinary commands.
+2. Resolve headers, Toolbar and Inspector in UI pixel coordinates first.
+3. Route a pointer action to exactly one viewport; blank UI space consumes input.
+4. Convert pixels with the owning viewport's camera and rectangle only.
+5. Record gesture owner on press. Release outside a viewport ends that owner's
+   gesture; it cannot create an editor action in another viewport.
+6. Losing focus, Escape, hidden-pane transition or incompatible layout/frame
+   change cancels active gestures. A work-zone drag released outside Simulation
+   is canceled rather than committed at an unrelated coordinate.
+7. Middle-button drag pans either view. Existing Pan tool + left drag remains
+   available in Simulation. Robotics left clicks cannot edit or select truth.
+8. Wheel over a viewport zooms that camera; wheel over Inspector body scrolls;
+   wheel over headers/Toolbar does not leak into a viewport.
+9. Editor tools, Delete and Q/E object rotation require Simulation focus.
+   Clicking an editor tool deliberately focuses Simulation. Runtime movement
+   keys and existing planning/reset commands work with either viewport focused,
+   but are suppressed while the app is unfocused or Inspector/UI owns focus.
+10. Kidnap-at-cursor requires a current valid Simulation cursor, never a stale
+    Robotics or Inspector coordinate. Navigation mode remains unrelated to
+    Robotics fixed-frame choice.
+
+Keep automatic path execution behavior when focus changes; this milestone adds
+input gating, not a new simulation pause feature. Refresh hover coordinates after
+Follow/resize/pan so preview and click conversion use the displayed camera.
+
+Render each pane with its assigned viewport and explicit clipping, then restore
+UI view state. Draw a bounded background per pane; clearing the entire window
+for the second pane must not erase the first. Handle zero-sized/minimized
+viewports without divide-by-zero or invalid SFML views.
+
+## 6. Camera contract
+
+Use a small ViewportCamera holding center, world-units-per-pixel zoom, viewport,
+Follow state and drag state. It depends on an optional pose/target, not AMR or
+estimator classes. Reuse the class without sharing its instances.
+
+- Simulation starts Follow ON, targets the accepted post-collision truth pose.
+- Robotics starts Follow OFF. In SLAM local its only follow source is a valid
+  Tracking SLAM pose; in Map it is a valid AMCL estimate with its quality shown.
+  AMCL ambiguity/recovery or invalid data suspends the target. Valid Tracking
+  estimates may be followed without claiming navigation-grade convergence.
+- Follow states are Off, Following and Waiting. Waiting freezes the center and
+  shows why. Returning to a usable estimate resumes the user's enabled Follow.
+- Re-enable Follow: center immediately on the current usable target, preserve
+  zoom. Follow affects translation only; heading does not rotate the camera.
+- The first nonzero manual drag disables Follow only for that gesture's camera.
+  A click without movement does not disable it. No automatic re-enable on release.
+- Wheel zoom preserves Follow; use center-based zoom with bounded finite scale.
+  Initial limits: 0.1–20 project world units per physical viewport pixel.
+- Follow has no damping/interpolation. AMCL corrections may visibly jump; do not
+  hide estimator behavior with camera smoothing.
+- Resize preserves center, world-units-per-pixel and Follow state, recalculating
+  view size from the new viewport dimensions.
+- Ctrl+0 and the header Reset action affect only the focused camera: restore
+  default scale (1 unit/pixel), disable Follow and use that frame's default
+  center. Simulation uses configured Start or the existing default robot
+  position; SLAM local uses (0,0); Map uses known-map boundary center.
+- Store a separate Robotics camera context for map and slam_local so switching
+  fixed frame cannot reinterpret the same numeric center in a different frame.
+  Restore a saved context only while its frame epoch is still valid.
+- A new SLAM epoch resets only its center/scale context to local defaults and
+  preserves Follow intent as Waiting until bootstrap. A new map generation
+  invalidates only the corresponding map camera context.
+- In tabbed layout, hidden cameras retain settings; enabled Follow can update
+  against valid targets before the pane is shown again. Visibility never resets
+  or gates simulation/estimator updates.
+
+## 7. Inspector: sections and two-column tables
+
+Preserve Map, Navigation, Localization and SLAM tabs, independent scrolling and
+the short-height footer fallback. Replace newline-delimited section bodies with
+a small ordered presentation model:
+
+    Section: title + ordered entries
+    PropertyRow: label + value + optional semantic status
+    TextBlock: label + wrapped text + optional semantic status
+
+Use one label/value divider for the panel, based on available width, not on
+changing numeric values. Left-align values; include explicit units and frame
+labels. Keep scalar values in rows and long explanations in full-width blocks.
+Represent entries in one ordered sequence so narrative blocks can occur beside
+the relevant properties rather than all at the bottom.
+
+Measure rows and blocks before clamping scroll and drawing. Wrap both columns as
+needed; row height is the maximum of their measured heights. Long unbroken
+tokens must wrap or have an explicit readable overflow treatment. Clip the body;
+headers/tabs/footer remain fixed and do not overlap. Preserve fields, controls,
+validation messages, application status and navigation stop reason.
+
+Group frame/epoch, scan age, layer availability and Follow status with the
+relevant diagnostics. Show native SLAM coordinates and native AMCL map
+coordinates explicitly. Existing truth/error diagnostics remain clearly labeled
+in Inspector, outside the normal Robotics snapshot and camera path. Hide or
+mark cross-map/time-mismatched diagnostics unavailable instead of reporting a
+misleading error.
+
+The Inspector formats supplied state. It must not validate maps, choose
+navigation gates, estimate poses, own layer truth, or become another map canvas.
+
+## 8. Toolbar typography and pixel alignment
+
+Correct measurable placement first, then determine actual raster quality on the
+desktop. The source alone cannot identify OS bitmap scaling, fallback font,
+smoothing and subpixel placement contributions.
+
+- Draw UI at the actual render-target pixel size, outside world cameras.
+- Derive button edges from cumulative rounded positions so proportional sizing
+  cannot accumulate gaps or overlap. Drawing and hit testing share rectangles.
+- Center using full glyph local bounds: subtract bounds.position and account
+  for bounds.size, then round final UI placement. Use a consistent visual
+  baseline/height policy for neighboring labels.
+- Do not scale a rendered text texture to make labels fit. Use integer character
+  sizes and measure them in the actual selected font.
+- Evaluate 14/15/16 pixel sizes, beginning with 16 for readability, at default
+  and compact widths. Prefer compact documented labels over smaller text.
+- Share only the small text-placement helper needed by Toolbar, view headers
+  and Inspector tabs; do not introduce a general UI abstraction.
+- Record the loaded font and render-target/client size in playtest evidence.
+  Compare smoothing settings only if the capture shows a problem. Do not assume
+  disabling smoothing fixes blur.
+- Inspect native-size captures and the real display at the user's scaling.
+  Target 100%, 125%, 150% where available; record unavailable cases. Any global
+  DPI change remains a manual tester action. If OS bitmap scaling is confirmed,
+  address the narrow DPI cause in the UI task rather than compensating with
+  arbitrary world-view scaling.
+
+## 9. Real desktop playtest workflow
+
+Establish observation before substantial UI implementation. The old plan's
+capture error and claims about installed tools are historical observations,
+not verified current environment facts. No capture facility was tested here.
+
+The implementation preflight must establish: correct executable/process,
+working directory, actual client dimensions, focus, readable current screenshot,
+input delivery and a fresh post-action screenshot. Prefer supported native
+desktop tooling. If unavailable, have a human operate and capture the real app;
+do not convert missing desktop evidence into a passing automated acceptance.
+
+A framebuffer dump is useful rendering evidence but does not prove focus,
+OS-DPI behavior, native input delivery or interaction feel. Do not add a capture
+hook or repair host tooling automatically as part of this milestone. Expand that
+scope only if the operator chooses it; the human-led desktop route is sufficient.
+
+Later add a narrow scripts/ui_playtest.ps1 launcher/checklist helper if useful:
+build as requested, launch one known process from repository cwd, record readiness
+and run metadata, and stop only that owned process during cleanup. A launcher
+cannot mark UI scenarios passed. Use a temporary scenario directory/map copy;
+do not overwrite the user's saved map/config. Screenshots and logs go to an
+external artifact directory with a run manifest.
+
+Each case records preconditions, real input actions, expected behavior, observed
+behavior, before/after screenshots (or a short recording for motion), PASS/FAIL/
+BLOCKED/NOT RUN, and issue/retest evidence.
+
+| Case | Real desktop actions and acceptance |
+|---|---|
+| D01 Startup | Inspect both panes at 1440×900: Simulation Follow ON, Robotics SLAM local, separate frame labels, no estimation overlays on Simulation. |
+| D02 Fixed frame | Bootstrap away from world origin with nonzero heading; switch SLAM local ↔ Map. SLAM begins at identity, AMCL stays in map, missing-transform layers report unavailable. |
+| D03 Layers/scan | Toggle every layer by visible control and applicable shortcut; move/rotate with nonzero LiDAR extrinsics; inspect SLAM and AMCL paired-scan status including slower AMCL updates. No truth fallback or double extrinsic. |
+| D04 Follow | Drive and rotate; zoom while following; pan until Follow turns OFF; release and re-enable. Check immediate recenter, unchanged zoom and independent cameras. |
+| D05 Invalid estimates | Before bootstrap, after AMCL reset, and in available Lost/Ambiguous/Recovering scenarios, inspect unavailable/degraded labels and Waiting Follow. Never follow truth in Robotics. |
+| D06 Routing/capture | Click both panes, blank headers and Inspector; drag across pane/Inspector edges, release outside, Alt-Tab and return. No editor leakage, stuck pan or unintended held-key motion. |
+| D07 Inspector | Inspect all four tabs, every field, long Reason/Message/validation text, independent scrolling and compact-height footer. No clipped values or shifting columns. |
+| D08 Typography/resize | Inspect all Toolbar/header/tab labels at 1440×900, 1280×800 and 1024×720, maximize/restore and available DPI cases. Check native-size clarity, hit targets and split/tab transition. |
+| D09 Lifecycle | SLAM-only reset, AMCL-only/global reset, robot reset, Start change, map load/clear and kidnap on disposable data. No previous-epoch scan/map artifacts; unrelated state survives. |
+| D10 Existing flows | Place/select/delete/rotate, draw/cancel a work zone, plan/execute in both navigation modes. Camera/frame choices do not change command semantics. |
+
+If a state cannot be reached reliably through available UI, record that case as
+NOT RUN and arrange a human/reproducible scenario; do not fabricate completion
+from a headless fixture. Baseline capture precedes edits, and defects follow
+fix → rebuild → fresh process → replay. A human explicitly accepts text clarity,
+layout readability, camera feel and discoverability.
+
+## 10. Automated regression and completion gates
+
+Automated checks establish invariants, not UI acceptance. Extend existing suites
+or add a focused camera/frame/table suite only where independent pure logic
+benefits. Avoid assertions that simply mirror a draw-policy enum.
+
+Required targeted coverage:
+
+- Nonzero translation/yaw scan composition, negative coordinates, extrinsics
+  exactly once, physical-hit/max-range rules and frame incompatibility.
+- Native SLAM identity after delayed bootstrap; no truth inputs required by
+  default Robotics data; same input results unaffected by display actions.
+- AMCL paired scan from its committed sequence, including all-max commits,
+  initialization without scan and failed commits; no mixed epochs.
+- Same map revision across reset/replacement cannot reuse stale geometry.
+- Separate Simulation and per-frame Robotics camera contexts; Follow defaults,
+  first-motion pan disable, zero-motion click, zoom/resize, invalid target and
+  active-camera reset.
+- Actual input-routing logic for header/Inspector consumption, capture owner,
+  out-of-viewport release, focus loss and compact layout changes.
+- Table wrapping/content measurement before scroll clamp; independent tabs,
+  long words, empty values, compact footer and glyph-bound containment.
+- Integration retains sensor fan-out, RNG isolation, independent estimator
+  reset and navigation gate behavior.
+
+Use existing SimulatorRuntimeTests, LocalizationSensorTests and
+SlamIntegrationTests where relevant. Preserve geometric display-transform
+coverage if its API changes by testing the replacement composition helper;
+do not retain a truth-aligned production path just to preserve a test call.
+
+After targeted tests, build the app and run normal regression. At the integrated
+milestone gate run a clean build and both stress suites:
+
+    mingw32-make clean
+    mingw32-make all
+    mingw32-make test
+    mingw32-make test-localization-stress
+    mingw32-make test-slam-stress
+
+Run localization-benchmark and slam-benchmark if sensor dispatch/inference
+integration or measured runtime performance is affected. Report changed timing
+rather than weakening functional gates. Existing estimator benchmarks do not
+measure two-pane UI responsiveness; inspect that during desktop playtesting.
+The Makefile lacks generated header-dependency tracking, so a clean final build
+is necessary after header changes.
+
+Completion requires all of:
+
+- Architecture/frame/lifetime review passes with no implicit cross-frame bridge.
+- Targeted and normal regression pass; both stress suites have no unexplained
+  functional failures. Unrelated baseline failures are reported, not broadened
+  into this UI milestone.
+- D01–D10 have real desktop evidence for the agreed acceptance matrix.
+- A human accepts visual clarity and interaction; material issues are fixed and
+  replayed. BLOCKED or NOT RUN acceptance cases remain incomplete.
+- Report build, regression, stress/performance, launch smoke, desktop visual,
+  desktop interaction and human acceptance separately.
+- Update STATUS only in the later implementation turn, with actual evidence.
+  Never equate green tests or process survival with UI acceptance.
+
+## 11. Implementation sequence and expected files
+
+No implementation is performed by this planning task. A later explicit
+implementation task uses this sequence; each stage stays inside this milestone.
+
+| Stage | Work and likely files | Exit evidence |
+|---|---|---|
+| 0 Contract + desktop baseline | Resolve section 13 choices; create docs/specs/EditorUISpec.md and update the relevant index entries; establish capture/operator and repeatable scenario. Read approved specs before changes. | Concrete UI/frame contract, baseline build/regression and a real observed desktop session; failures clearly identified. |
+| 1 Frame/data boundary | visualization/RoboticsVisualizer and data records; adapt localization/LocalizationVisualization and slam/SlamVisualization; app/Simulator presentation adapter and epoch/pair bookkeeping. | Native-frame and temporal tests, correct cache lifetimes; no estimator algorithm change. |
+| 2 Cameras/layout/input + render split | ui/ViewportCamera, small view header/control component, ApplicationLayout; app/Simulator routing/render changes. Wire Follow here, not as a late retrofit. | Targeted routing/camera regression and early D01–D06/D09 desktop evidence; Simulation overlays removed. |
+| 3 Inspector and typography | ui/InspectorPanel, EditorToolbar, optional UiTextLayout helper shared with headers. | Table/geometry checks plus D07/D08 visual review and fixes. |
+| 4 Integrated acceptance | Optional scripts/ui_playtest.ps1, full D01–D10 replay, build/regression/stress, applicable benchmarks, control documentation. | Separate automated and human desktop gates; truthful STATUS update after verification. |
+
+New production paths are expected to be limited to visualization/RoboticsVisualizer
+(and a data header only if needed), ui/ViewportCamera and a small view-controls
+component. Existing rendering/Inspector files adapt in place. Makefile changes
+in the future implementation must add visualization to SRC_DIRS and update every
+affected explicit test link list; production wildcard discovery alone is
+insufficient. Keep include/ as the sole project include root and tests flat.
+
+Do not automatically add dependencies, generated artifacts, a general
+FrameManager, event bus, TF history service or a new simulator architecture.
+No phase implies commit/push authorization.
+
+## 12. Changes from the previous plan
+
+| Previous recommendation or omission | Current decision and reason |
+|---|---|
+| Robotics fixed in map/world with truth-aligned SLAM | Native slam_local / map selector; no default bridge. A display permission in SlamV1Spec is not a requirement to truth-align estimates. |
+| AMCL default Follow and scan anchor selected with Follow source | Fixed-frame-specific Follow; scan paired with its own estimator observation independently of camera/layer options. |
+| Simulation Follow default OFF left as a question | ON is required by this task and is settled. |
+| One visible Simulation/Robotics mode | Default embedded side-by-side panes, compact-width tabs as an explicit fallback; simpler simultaneous observation. |
+| One Robotics center across potential frames | Frame-specific camera contexts and epoch invalidation prevent coordinate reinterpretation. |
+| Broad “world” label for odometry and path | Known-map provenance, world-seeded odometry diagnostic, explicit native layer compatibility; no invented ROS odom tree. |
+| Latest scan plus optional estimated anchor | Sequence/epoch-paired observations; AMCL cadence and stale data are part of the contract. |
+| Revision-only caches and generic reset risks | Native geometry, session + revision keys, reset/bootstrap/kidnap handling matrix. |
+| Capture repair/in-app hook central to closing acceptance | Revalidate actual capability first; real human desktop route is valid. Framebuffer output alone cannot certify desktop input/DPI. |
+| Capture tooling availability/error stated as current | Historical, unverified claims removed from the current baseline. |
+| Follow integration and playtest late in the phases | Follow is integrated with cameras; observe the desktop before UI work and replay during each visible stage. |
+| Repeated approval of unspecified implementation details | Concrete recommended defaults; only product/environment choices remain open. |
+
+Retained useful parts: a cross-subsystem Visualizer, observational leaf renderers,
+no symmetric SimulationVisualizer, four Inspector tabs, structured rows and long
+blocks, glyph-bounds alignment, deterministic regression and separate human
+acceptance.
+
+## 13. Human decisions still open
+
+These are bounded product/acceptance choices, not permission to implement now.
+The recommendations above form a complete default plan; change only the affected
+contract if the user chooses otherwise.
+
+1. Embedded presentation: accept side-by-side at adequate width with compact
+   tabs, or prefer always-tabbed views? Recommendation: side-by-side plus fallback.
+2. Initial Robotics focus: keep SLAM local as default (recommended for inspecting
+   the independently built map), or start in Map for AMCL-focused work? Both
+   fixed frames are part of V1 regardless.
+3. Acceptance environment: name the desktop operator and available Windows
+   scaling/client-size matrix. Recommendation: native desktop capture and human
+   acceptance; use a human-led session if automation cannot observe the window.
+   Unavailable required cases must remain pending or be explicitly removed from
+   the agreed matrix.
+4. Cross-frame comparison: is truth-aligned comparison required in this same
+   milestone? Recommendation: defer it. If required, define a separate labeled
+   diagnostic contract before expanding implementation; do not reinstate the old
+   implicit world-aligned Robotics design.
+
+Simulation Follow ON, independent cameras, no estimation overlays in Simulation,
+sensor-only SLAM, and automated-tests-not-UI-acceptance are settled requirements,
+not open questions.

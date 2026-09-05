@@ -2,11 +2,10 @@
 - 開始任務前先讀 `docs/agent/STATUS.md`、相關 `docs/specs/`，再檢查對應 source 與 tests。
 - 只處理明確要求的範圍；不要自動進入下一 milestone、做無關重構或加入不必要的 dependency。
 - 優先採用簡單、可維護且符合既有 architecture boundary 的實作，不為了 style 重寫正常運作的程式。
-- UI / runtime 任務在環境允許時必須實際 build、啟動程式並操作相關流程，而不只檢查程式碼。
-- UI 驗證應在重要操作狀態查看或保存 screenshot，主動檢查 clipping、overlap、排版、狀態回饋與互動問題。
-- 若無法直接操作桌面程式，改用 deterministic interaction / rendering tests，並明確說明未完成真實 desktop acceptance。
-- Repository 內若有適用的 Skill，應優先閱讀並依其 workflow 執行。
-- 修改後先跑 targeted tests，再執行與改動相關的 regression / stress verification；失敗時找出原因再修正。
 - Source of truth 優先序：`docs/specs/` > 明確任務需求 > tests > 現有 implementation。
-- 完成後更新 `docs/agent/STATUS.md` 為實際狀態，不得把未驗證或規劃中的功能寫成已完成。
-- 任務完成後 commit 並 push implementation + STATUS，一併回報修改內容、驗證結果與仍存在的限制。
+- Repository 內若有與任務直接相關的 Skill，先閱讀再執行。
+- 修改後先跑 targeted verification，再執行與改動直接相關的 regression / stress tests。
+- 驗證失敗時先找出根因，只修正與目前任務相關的問題，不擴大 scope。
+- 完成實作後更新 `docs/agent/STATUS.md`，只記錄已完成且已驗證的實際狀態。
+- 分析或規劃任務不得修改 production code、STATUS 或假裝已完成實作，除非任務明確要求。
+- 任務完成後簡潔回報修改內容、驗證結果、已知限制與尚未完成事項。
